@@ -1,0 +1,434 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { imageUrl } from '@shared/api'
+import { MISTAKES } from '@shared/types'
+import { Float, Flip, Grey, Pause, Play, Redo, Stop } from '../components/Icons'
+import { MarkupImage, renderMarkup, type Stroke } from '../components/Markup'
+import { Stage } from '../components/Stage'
+import { Button, IconButton, Segmented } from '../components/ui'
+import {
+  canTryAgain,
+  memoryAdvance,
+  memoryAgain,
+  memoryDuration,
+  memoryElapsed,
+  memoryNextRef,
+  memoryRemaining,
+  memoryStop,
+  memoryTick,
+  memoryTogglePause,
+  type MemoryEvent,
+  type MemoryState,
+  type MemoryStep
+} from '../lib/memoryEngine'
+import { chime } from '../lib/sound'
+import { useApp } from '../store'
+import { Overlay } from './Review'
+
+/**
+ * Memory mode, after the study loop from Kim Jung Gi's memory practice:
+ * study the reference, hide it and draw from memory, reveal it and mark the
+ * differences in red, then draw it again while the corrections are fresh.
+ */
+export function MemorySession() {
+  const run = useApp((s) => s.run)
+  const float = useApp((s) => s.float)
+  const setFloat = useApp((s) => s.setFloat)
+  const [now, setNow] = useState(() => Date.now())
+  const [peekHidden, setPeekHidden] = useState(false)
+  const [flip, setFlip] = useState(false)
+  const [grey, setGrey] = useState(false)
+  const [strokes, setStrokes] = useState<Stroke[]>([])
+  const pending = useRef<Promise<unknown>[]>([])
+  const floatWasOn = useRef(false)
+
+  const handleEvents = useCallback((events: MemoryEvent[]) => {
+    const st = useApp.getState()
+    const r = st.run
+    if (!r) return
+    for (const ev of events) {
+      if (ev.type === 'drawStart') {
+        if (st.settings.sound) chime('rest')
+      } else if (ev.type === 'drawEnd') {
+        if (st.settings.sound) chime('pose')
+        const slot = r.memory!.refs[ev.index]
+        const idx = st.addResult({
+          imageId: slot.imageId,
+          imagePath: slot.imagePath,
+          plannedSeconds: r.memory!.drawSeconds,
+          spentMs: Math.round(ev.drawMs),
+          studyMs: Math.round(ev.studyMs),
+          attempt: ev.attempt,
+          skipped: false,
+          mistakes: [],
+          redo: false
+        })
+        if (r.plan.capture && st.settings.captureRegion) {
+          pending.current.push(
+            window.api.capture(st.settings.captureRegion, r.id, idx).then((path) => {
+              if (path) useApp.getState().updateResult(idx, { capturePath: path })
+            })
+          )
+        }
+        // A small float window is too cramped to compare in; come back to full size.
+        if (useApp.getState().float.on) {
+          floatWasOn.current = true
+          useApp.getState().setFloat({ on: false })
+        }
+      } else if (ev.type === 'done') {
+        if (st.settings.sound && ev.finished) chime('done')
+        const waiting = pending.current
+        pending.current = []
+        void Promise.allSettled(waiting).then(() => useApp.getState().finishRun(ev.finished))
+      }
+    }
+  }, [])
+
+  const apply = useCallback(
+    (fn: (s: MemoryState, now: number) => MemoryStep) => {
+      const r = useApp.getState().run
+      if (!r?.memory || r.memory.phase === 'done') return
+      const step = fn(r.memory, Date.now())
+      if (step.state !== r.memory) useApp.getState().setMemory(step.state)
+      handleEvents(step.events)
+      setNow(Date.now())
+    },
+    [handleEvents]
+  )
+
+  /** Save the red marks for the attempt being revealed, then continue. */
+  const leaveReveal = useCallback(
+    (fn: (s: MemoryState, now: number) => MemoryStep) => {
+      const st = useApp.getState()
+      const r = st.run
+      if (!r) return
+      const idx = r.results.length - 1
+      const capture = r.results[idx]?.capturePath
+      if (strokes.length && capture) {
+        const marks = strokes
+        pending.current.push(
+          renderMarkup(marks, imageUrl(capture)).then(async (png) => {
+            if (!png) return
+            const path = await window.api.saveMarkup(r.id, `markup-${String(idx + 1).padStart(3, '0')}`, png)
+            useApp.getState().updateResult(idx, { markupPath: path })
+          })
+        )
+      }
+      setStrokes([])
+      apply(fn)
+      if (floatWasOn.current && useApp.getState().run?.memory?.phase !== 'done') {
+        floatWasOn.current = false
+        useApp.getState().setFloat({ on: true })
+      }
+    },
+    [apply, strokes]
+  )
+
+  useEffect(() => {
+    const id = setInterval(() => apply(memoryTick), 100)
+    return () => clearInterval(id)
+  }, [apply])
+
+  const phase = run?.memory?.phase
+
+  useEffect(() => {
+    return window.api.onHotkey((action) => {
+      const p = useApp.getState().run?.memory?.phase
+      if (action === 'pause') apply((s, t) => ({ state: memoryTogglePause(s, t), events: [] }))
+      else if (p === 'study' || p === 'draw') apply(memoryAdvance)
+    })
+  }, [apply])
+
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
+      if (e.key === 'Escape') leaveReveal(memoryStop)
+      else if (phase === 'reveal') {
+        if (e.key === 'Enter') {
+          const s = useApp.getState().run?.memory
+          leaveReveal(s && canTryAgain(s) ? memoryAgain : memoryNextRef)
+        } else if (e.key === 'ArrowRight') leaveReveal(memoryNextRef)
+      } else {
+        if (e.key === ' ') {
+          e.preventDefault()
+          apply((s, t) => ({ state: memoryTogglePause(s, t), events: [] }))
+        } else if (e.key === 'Enter') apply(memoryAdvance)
+        else if (e.key.toLowerCase() === 'h' && phase === 'study') setPeekHidden(true)
+        else if (e.key.toLowerCase() === 'f') setFlip((v) => !v)
+        else if (e.key.toLowerCase() === 'g') setGrey((v) => !v)
+      }
+    }
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'h') setPeekHidden(false)
+    }
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+    }
+  }, [apply, leaveReveal, phase])
+
+  if (!run?.memory) return null
+  const m = run.memory
+  const slot = m.refs[Math.min(m.index, m.refs.length - 1)]
+  const left = memoryRemaining(m, now)
+  const shown = left ?? memoryElapsed(m, now)
+  const duration = memoryDuration(m)
+  const progress = duration ? Math.min(1, memoryElapsed(m, now) / duration) : 0
+  const urgent = left !== null && left <= 5000
+
+  if (m.phase === 'reveal' || m.phase === 'done') {
+    return <Reveal strokes={strokes} setStrokes={setStrokes} leave={leaveReveal} />
+  }
+
+  const studying = m.phase === 'study'
+  const label = studying
+    ? `Study reference ${m.index + 1} of ${m.refs.length}`
+    : `Draw it from memory, attempt ${m.attempt} of ${m.maxAttempts}`
+
+  return (
+    <Stage
+      path={studying && !peekHidden ? slot.imagePath : null}
+      flip={flip}
+      grey={grey}
+      overlay={
+        <>
+          {!studying && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
+              <div className={float.on ? 'text-[13px] text-muted' : 'text-[15px] text-muted'}>
+                The reference is hidden. Draw what you remember.
+              </div>
+              <div className={`tnum font-semibold leading-none tracking-[-0.03em] ${urgent ? 'text-red' : ''} ${float.on ? 'text-[36px]' : 'text-[72px]'}`}>
+                {clock(shown, left !== null)}
+              </div>
+              <Button tone="primary" onClick={() => apply(memoryAdvance)}>
+                Reveal (Enter)
+              </Button>
+            </div>
+          )}
+          {studying && peekHidden && (
+            <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-muted">
+              Picture it on your page. Let go of H to look again.
+            </div>
+          )}
+          {m.paused && (
+            <div className="absolute inset-0 flex items-center justify-center bg-bg/55">
+              <div className="rounded-md bg-surface px-4 py-2 text-[15px] ring-1 ring-line">Paused. Press space to go on.</div>
+            </div>
+          )}
+          {!float.on && <div className="pointer-events-none absolute left-4 top-3 text-muted">{label}</div>}
+          {studying && (
+            <div
+              className={`tnum pointer-events-none absolute bottom-3 right-4 font-semibold leading-none tracking-[-0.03em] drop-shadow-[0_1px_8px_rgba(0,0,0,0.45)] ${
+                urgent ? 'text-red' : 'text-ink'
+              } ${float.on ? 'text-[26px]' : 'text-[44px]'}`}
+            >
+              {clock(shown, true)}
+            </div>
+          )}
+          {duration > 0 && (
+            <div className="absolute inset-x-0 bottom-0 h-[3px] bg-line/60">
+              <div className={`h-full ${urgent ? 'bg-red' : 'bg-blue'}`} style={{ width: `${progress * 100}%` }} />
+            </div>
+          )}
+        </>
+      }
+    >
+      <IconButton label={m.paused ? 'Go on (space)' : 'Pause (space)'} onClick={() => apply((s, t) => ({ state: memoryTogglePause(s, t), events: [] }))}>
+        {m.paused ? <Play size={17} /> : <Pause size={17} />}
+      </IconButton>
+      {studying ? (
+        <>
+          <button
+            type="button"
+            className="h-9 rounded-md px-3 text-[13px] text-muted hover:bg-raised hover:text-ink"
+            onPointerDown={() => setPeekHidden(true)}
+            onPointerUp={() => setPeekHidden(false)}
+            onPointerLeave={() => setPeekHidden(false)}
+            title="Hold to hide the reference and test your memory (or hold H)"
+          >
+            Hold to test
+          </button>
+          <Button tone="primary" className="h-8" onClick={() => apply(memoryAdvance)}>
+            Hide it, I'm ready
+          </Button>
+        </>
+      ) : (
+        <Button tone="primary" className="h-8" onClick={() => apply(memoryAdvance)}>
+          Reveal
+        </Button>
+      )}
+      <span className="mx-1 h-5 w-px bg-line" />
+      {studying && (
+        <>
+          <IconButton label="Flip (F)" active={flip} onClick={() => setFlip((v) => !v)}>
+            <Flip size={17} />
+          </IconButton>
+          <IconButton label="Greyscale (G)" active={grey} onClick={() => setGrey((v) => !v)}>
+            <Grey size={17} />
+          </IconButton>
+        </>
+      )}
+      <IconButton label={float.on ? 'Leave float mode' : 'Float on top'} active={float.on} onClick={() => setFloat({ on: !float.on })}>
+        <Float size={17} />
+      </IconButton>
+      <span className="mx-1 h-5 w-px bg-line" />
+      <IconButton label="End session (Esc)" onClick={() => apply(memoryStop)}>
+        <Stop size={17} />
+      </IconButton>
+    </Stage>
+  )
+}
+
+function Reveal({
+  strokes,
+  setStrokes,
+  leave
+}: {
+  strokes: Stroke[]
+  setStrokes: (s: Stroke[]) => void
+  leave: (fn: (s: MemoryState, now: number) => MemoryStep) => void
+}) {
+  const run = useApp((s) => s.run)!
+  const updateResult = useApp((s) => s.updateResult)
+  const [view, setView] = useState<'side' | 'overlay'>('side')
+  const m = run.memory!
+  const idx = run.results.length - 1
+  const result = run.results[idx]
+  const slot = m.refs[m.index]
+  if (!result) return null
+  const ref = imageUrl(slot.imagePath)
+  const capture = result.capturePath ? imageUrl(result.capturePath) : null
+  const earlier = run.results.filter((r, i) => i < idx && r.imageId === result.imageId && r.capturePath)
+  const again = canTryAgain(m)
+  const last = m.index >= m.refs.length - 1
+
+  const toggle = (mk: string) =>
+    updateResult(idx, { mistakes: result.mistakes.includes(mk) ? result.mistakes.filter((x) => x !== mk) : [...result.mistakes, mk] })
+
+  return (
+    <div className="grid h-full grid-cols-[minmax(0,1fr)_310px]">
+      <div className="flex min-h-0 min-w-0 flex-col gap-3 p-4">
+        <div className="flex items-center gap-3">
+          <h1 className="mr-auto text-[17px] font-semibold">
+            Compare: reference {m.index + 1} of {m.refs.length}, attempt {m.attempt}
+          </h1>
+          {capture && (
+            <Segmented<'side' | 'overlay'>
+              label="Compare"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'side', label: 'Side by side' },
+                { value: 'overlay', label: 'Overlay' }
+              ]}
+            />
+          )}
+        </div>
+        <div className="flex min-h-0 flex-1 gap-3">
+          {capture && view === 'overlay' ? (
+            <Overlay reference={ref} drawing={capture} />
+          ) : (
+            <>
+              <figure className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <div className="min-h-0 flex-1 overflow-hidden rounded-md bg-surface">
+                  <img src={ref} alt="Reference" className="h-full w-full object-contain" />
+                </div>
+                <figcaption className="pt-1.5 text-center text-[12.5px] text-muted">Reference</figcaption>
+              </figure>
+              {capture ? (
+                <figure className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  <div className="min-h-0 flex-1 overflow-hidden rounded-md bg-surface">
+                    <MarkupImage src={capture} strokes={strokes} onChange={setStrokes} />
+                  </div>
+                  <figcaption className="flex justify-center gap-3 pt-1.5 text-[12.5px] text-muted">
+                    Your drawing. Draw on it in red to mark what is off.
+                    {strokes.length > 0 && (
+                      <button type="button" className="text-blue hover:underline" onClick={() => setStrokes(strokes.slice(0, -1))}>
+                        Undo mark
+                      </button>
+                    )}
+                  </figcaption>
+                </figure>
+              ) : null}
+            </>
+          )}
+        </div>
+        {!capture && (
+          <p className="text-center text-muted">
+            Put your page next to the reference. Find 4 to 6 big differences (angles, proportions, the spaces between
+            shapes) and mark each one in red on your paper.
+          </p>
+        )}
+      </div>
+
+      <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-line p-5">
+        <div>
+          <div className="text-[15px] font-semibold">What did you remember wrong?</div>
+          <div className="text-[12.5px] text-muted">Studied {Math.round((result.studyMs ?? 0) / 1000)}s, drew {Math.round(result.spentMs / 1000)}s</div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {MISTAKES.filter((mk) => mk !== 'ran out of time').map((mk) => (
+            <button
+              key={mk}
+              type="button"
+              aria-pressed={result.mistakes.includes(mk)}
+              onClick={() => toggle(mk)}
+              className={`h-8 rounded-full px-3 text-[13px] ring-1 transition-colors first-letter:uppercase ${
+                result.mistakes.includes(mk) ? 'bg-blue-soft text-blue ring-blue' : 'text-ink ring-line hover:ring-muted'
+              }`}
+            >
+              {mk}
+            </button>
+          ))}
+        </div>
+        <label className="block">
+          <span className="block pb-2 text-muted">What to fix next time</span>
+          <textarea
+            value={result.note ?? ''}
+            onChange={(e) => updateResult(idx, { note: e.target.value })}
+            rows={3}
+            placeholder="e.g. the elbow lines up with the hip"
+            className="w-full resize-none rounded-md bg-surface p-2.5 text-ink outline-none ring-1 ring-line placeholder:text-muted/70 focus:ring-blue"
+          />
+        </label>
+
+        {earlier.length > 0 && (
+          <div>
+            <div className="pb-2 text-muted">Earlier attempts</div>
+            <div className="flex gap-2">
+              {earlier.map((r) => (
+                <div key={r.attempt} className="w-20">
+                  <div className="relative aspect-[3/4] overflow-hidden rounded bg-surface">
+                    <img src={imageUrl(r.capturePath!)} alt={`Attempt ${r.attempt}`} className="absolute inset-0 h-full w-full object-contain" />
+                    {r.markupPath && <img src={imageUrl(r.markupPath)} alt="" className="absolute inset-0 h-full w-full object-contain" />}
+                  </div>
+                  <div className="pt-1 text-center text-[11.5px] text-muted">Attempt {r.attempt}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-auto grid gap-2">
+          {again && (
+            <Button tone="primary" className="h-11" onClick={() => leave(memoryAgain)}>
+              <Redo size={16} /> Draw it again from memory (Enter)
+            </Button>
+          )}
+          <Button tone={again ? 'quiet' : 'primary'} className="h-11" onClick={() => leave(memoryNextRef)}>
+            {last ? 'Finish session' : 'Next reference (→)'}
+          </Button>
+          <Button tone="ghost" onClick={() => leave(memoryStop)}>
+            End session
+          </Button>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function clock(ms: number, countdown: boolean): string {
+  const total = countdown ? Math.ceil(ms / 1000) : Math.floor(ms / 1000)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}

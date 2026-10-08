@@ -1,0 +1,140 @@
+@import '@fontsource-variable/schibsted-grotesk';
+@import 'tailwindcss';
+
+/*
+  Graphite and col-erase pencil: the background is a graphite drawing board,
+  the accent is the light-blue construction pencil animators sketch gestures
+  with, and red pencil marks the last seconds of a pose.
+*/
+:root,
+:root[data-theme='dark'] {
+  --bg: #1d1e20;
+  --surface: #26282b;
+  --raised: #303236;
+  --line: #3b3e43;
+  --ink: #ebe8e1;
+  --muted: #9b9a93;
+  --blue: #86b6e6;
+  --blue-soft: rgba(134, 182, 230, 0.16);
+  --red: #e2665f;
+  --heat-0: #33363b;
+  --heat-1: #33475c;
+  --heat-2: #476d93;
+  --heat-3: #6795c4;
+  --heat-4: #9cc6ef;
+  color-scheme: dark;
+}
+
+/* Light is newsprint: the cheap grey paper of figure-drawing pads. */
+:root[data-theme='light'] {
+  --bg: #e7e7e3;
+  --surface: #f1f1ee;
+  --raised: #fafaf8;
+  --line: #cfcfc9;
+  --ink: #232427;
+  --muted: #6b6c69;
+  --blue: #2c6aa8;
+  --blue-soft: rgba(44, 106, 168, 0.12);
+  --red: #c23d36;
+  --heat-0: #d9d9d4;
+  --heat-1: #b9cfe4;
+  --heat-2: #86acd2;
+  --heat-3: #4f84ba;
+  --heat-4: #275f98;
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-blue: var(--blue);
+  --color-blue-soft: var(--blue-soft);
+  --color-red: var(--red);
+  --font-sans: 'Schibsted Grotesk Variable', 'Segoe UI', system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* Pose change: one short fade, nothing else moves on its own. */
+.pose-in {
+  animation: pose-in 160ms ease-out;
+}
+@keyframes pose-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pose-in {
+    animation: none;
+  }
+}
+
+/* Controls that appear when the pointer is over the stage. */
+.reveal {
+  opacity: 0;
+  transition: opacity 160ms;
+}
+.stage:hover .reveal,
+.reveal:focus-within {
+  opacity: 1;
+}
+
+/* A pencil line: slightly uneven, like a stroke on paper. */
+.pencil {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
