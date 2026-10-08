@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, powerSaveBlocker, protocol, shell } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { FloatState, Hotkeys, ImageRef, Region, StoreName } from '@shared/types'
@@ -12,7 +13,10 @@ import {
   inspectFolder,
   isImagePath,
   keepPhoto,
+  keepReference,
+  missingFiles,
   refsForFiles,
+  relinkFolder,
   removeBoardFiles,
   scanFolder,
   thumbnail
@@ -72,7 +76,10 @@ function createWindow(): void {
 function registerProtocol(): void {
   protocol.handle('ref', async (req) => {
     const url = new URL(req.url)
-    const path = url.searchParams.get('path') ?? ''
+    let path = url.searchParams.get('path') ?? ''
+    // `fallback`: the kept copy of a reference, used once the original is gone.
+    const fallback = url.searchParams.get('fallback')
+    if (fallback && isImagePath(fallback) && !existsSync(path)) path = fallback
     if (!isImagePath(path)) return new Response('Not an image', { status: 400 })
     let file = path
     if (url.hostname === 'thumb') {
@@ -128,6 +135,9 @@ function registerIpc(): void {
   handle('library:scanFolder', (dir: string, recursive?: boolean) => scanFolder(dir, recursive !== false))
   handle('library:inspectFolder', (dir: string) => inspectFolder(dir))
   handle('library:copyImages', (boardId: string, refs: ImageRef[], baseDir?: string) => copyImages(boardId, refs, baseDir))
+  handle('library:missingFiles', (paths: string[]) => missingFiles(paths))
+  handle('library:relinkFolder', (oldDir: string, newDir: string, paths: string[]) => relinkFolder(oldDir, newDir, paths))
+  handle('library:keepReference', (imageId: string, path: string) => keepReference(imageId, path).catch(() => null))
   handle('library:refsForFiles', (paths: string[]) => refsForFiles(paths))
   handle('library:importUrl', (boardId: string, url: string) => importUrl(boardId, url))
   handle('library:importBytes', (boardId: string, name: string, bytes: Uint8Array) => importBytes(boardId, name, bytes))

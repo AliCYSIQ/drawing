@@ -6,7 +6,7 @@ import { ArrowLeft, Check, Lock, Plus, Trash } from '../components/Icons'
 import { Button, Empty, Field, IconButton, NumberField, PageHeader } from '../components/ui'
 import { currentLevel, isUnlocked, LADDERS, makeLadder, newLevel } from '../lib/challenges'
 import { describeBlocks, estimateSeconds, formatDuration, poolFromBoards, slotsForLevel } from '../lib/schedule'
-import { uid, useApp } from '../store'
+import { availablePool, uid, useApp } from '../store'
 import { BlocksEditor } from './Practice'
 
 export function Challenges({ challengeId }: { challengeId?: string }) {
@@ -138,7 +138,11 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
     setChallenges((list) => list.map((c) => (c.id === challenge.id ? { ...c, ...patch } : c)))
 
   const level = challenge.levels[Math.min(selected, challenge.levels.length - 1)]
-  const pool = useMemo(() => poolFromBoards(boards, challenge.boardIds), [boards, challenge.boardIds])
+  const missing = useApp((s) => s.missing)
+  const pool = useMemo(
+    () => availablePool({ boards, missing }, poolFromBoards(boards, challenge.boardIds)),
+    [boards, missing, challenge.boardIds]
+  )
   const unlocked = isUnlocked(challenge, selected)
   const attempts = sessions
     .filter((s) => s.challenge?.challengeId === challenge.id && s.challenge.level === selected)
@@ -237,7 +241,7 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
                         {s.poses.slice(0, 6).map((p, k) => (
                           <img
                             key={k}
-                            src={thumbUrl(p.capturePath ?? p.imagePath, 96)}
+                            src={p.capturePath ? thumbUrl(p.capturePath, 96) : thumbUrl(p.imagePath, 96, p.keptPath)}
                             alt=""
                             loading="lazy"
                             className="h-12 w-9 rounded object-cover"

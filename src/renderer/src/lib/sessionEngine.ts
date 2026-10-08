@@ -5,6 +5,8 @@
 export interface Slot {
   imageId: string
   imagePath: string
+  /** Kept copy to show if the original is gone (redoing an old session). */
+  fallbackPath?: string
   /** 0 = untimed. */
   seconds: number
 }

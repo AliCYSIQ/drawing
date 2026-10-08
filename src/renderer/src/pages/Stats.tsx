@@ -75,7 +75,7 @@ export function Stats() {
                   {s.poses.slice(0, 3).map((p, k) => (
                     <img
                       key={k}
-                      src={thumbUrl(p.imagePath, 96)}
+                      src={thumbUrl(p.imagePath, 96, p.keptPath)}
                       alt=""
                       loading="lazy"
                       className="h-10 w-8 rounded object-cover ring-2 ring-bg"
