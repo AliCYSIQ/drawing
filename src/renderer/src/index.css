@@ -57,6 +57,26 @@
   --font-sans: 'Schibsted Grotesk Variable', 'Segoe UI', system-ui, sans-serif;
 }
 
+/*
+  Page widths. Galleries fill the window (more columns on wide screens);
+  forms keep a readable width and stay centered; Settings is a single column.
+*/
+@utility page-wide {
+  margin-inline: auto;
+  max-width: 2200px;
+  padding: 2rem clamp(2rem, 3vw, 4rem);
+}
+@utility page-form {
+  margin-inline: auto;
+  max-width: 1440px;
+  padding: 2rem clamp(2rem, 3vw, 4rem);
+}
+@utility page-narrow {
+  margin-inline: auto;
+  max-width: 860px;
+  padding: 2rem;
+}
+
 html,
 body,
 #root {
@@ -117,8 +137,20 @@ textarea {
   }
 }
 
+/* The tab underline draws itself in, left to right, when a tab is picked. */
+.pencil-draw {
+  stroke-dasharray: 1;
+  animation: pencil-draw 220ms ease-out;
+}
+@keyframes pencil-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .pose-in {
+  .pose-in,
+  .pencil-draw {
     animation: none;
   }
 }

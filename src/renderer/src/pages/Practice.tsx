@@ -60,7 +60,7 @@ export function Practice() {
   }
 
   return (
-    <div className="mx-auto grid max-w-[1180px] grid-cols-[minmax(0,1fr)_320px] gap-10 px-8 py-8">
+    <div className="page-form grid grid-cols-[minmax(0,1fr)_clamp(300px,24vw,380px)] gap-10">
       <section aria-label="Session setup" className="min-w-0">
         <h1 className="pb-4 text-[22px] font-semibold tracking-[-0.01em]">What do you want to draw?</h1>
         <BoardPicker value={plan.boardIds} onChange={(boardIds) => setPlan({ boardIds })} />

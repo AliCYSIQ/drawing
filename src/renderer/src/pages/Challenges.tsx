@@ -35,7 +35,7 @@ function ChallengeList() {
   }
 
   return (
-    <div className="mx-auto max-w-[1180px] px-8 py-8">
+    <div className="page-form">
       <PageHeader title="Challenges" />
       <p className="-mt-3 max-w-2xl pb-6 text-muted">
         A challenge is a path of levels. Each level is a short session with a focus, and finishing it opens the next one.
@@ -165,7 +165,7 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
   }
 
   return (
-    <div className="mx-auto max-w-[1180px] px-8 py-8">
+    <div className="page-form">
       <button type="button" onClick={() => go({ name: 'challenges' })} className="mb-3 inline-flex items-center gap-1 text-muted hover:text-ink">
         <ArrowLeft size={15} /> Challenges
       </button>

@@ -1,7 +1,7 @@
 // Visual check, not a test: `SCREENSHOTS=<dir> npx playwright test screenshots`
 // saves a picture of each screen into <dir>.
 import { _electron as electron, test } from '@playwright/test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeFixtures } from './make-fixtures'
@@ -21,9 +21,18 @@ test('screens', async () => {
   const page = await app.firstWindow()
   await app.evaluate(({ dialog, BrowserWindow }, dir) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog
-    BrowserWindow.getAllWindows()[0].setSize(1280, 820)
+    const [w, h] = (process.env.SHOT_SIZE ?? '1280x820').split('x').map(Number)
+    BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, width: w, height: h })
   }, refsDir)
-  const shot = (name: string) => page.screenshot({ path: join(out!, `${name}.png`) })
+  // Electron's own capture: Playwright's screenshot can come out stale or
+  // cropped after the window is resized or zoomed.
+  const shot = async (name: string) => {
+    const png = await app.evaluate(async ({ BrowserWindow }) => {
+      const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage()
+      return img.toPNG().toString('base64')
+    })
+    writeFileSync(join(out!, `${name}.png`), Buffer.from(png, 'base64'))
+  }
 
   await shot('01-practice-empty')
   await page.getByRole('button', { name: 'Library' }).click()

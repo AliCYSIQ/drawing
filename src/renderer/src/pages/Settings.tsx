@@ -53,7 +53,7 @@ export function Settings() {
   }
 
   return (
-    <div className="mx-auto max-w-[860px] px-8 py-8">
+    <div className="page-narrow">
       <PageHeader title="Settings" />
       <div className="divide-y divide-line border-y border-line">
         <Field label="Theme">
@@ -67,6 +67,22 @@ export function Settings() {
               { value: 'system', label: 'Match Windows' }
             ]}
           />
+        </Field>
+
+        <Field label="Interface size" hint="Ctrl + and Ctrl − change it from anywhere; Ctrl 0 resets it.">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={80}
+              max={150}
+              step={10}
+              value={Math.round(settings.uiScale * 100)}
+              onChange={(e) => updateSettings({ uiScale: Number(e.target.value) / 100 })}
+              aria-label="Interface size"
+              className="h-1 w-56 accent-[var(--blue)]"
+            />
+            <span className="tnum w-12 text-ink">{Math.round(settings.uiScale * 100)}%</span>
+          </div>
         </Field>
 
         <Field label="Sound">

@@ -23,7 +23,7 @@ export function BoardPicker({ value, onChange }: { value: string[]; onChange: (i
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id])
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-2.5">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(clamp(190px,13vw,260px),1fr))] gap-2.5">
       {boards.map((b) => (
         <BoardChip key={b.id} board={b} selected={value.includes(b.id)} onClick={() => toggle(b.id)} />
       ))}
@@ -42,7 +42,7 @@ function BoardChip({ board, selected, onClick }: { board: Board; selected: boole
         selected ? 'bg-blue-soft ring-blue' : 'bg-surface ring-line hover:ring-muted'
       }`}
     >
-      <div className="flex h-16 gap-px overflow-hidden bg-bg">
+      <div className="flex aspect-[3/1] gap-px overflow-hidden bg-bg">
         {strip.map((img) => (
           <img key={img.id} src={thumbUrl(img.path, 160)} alt="" loading="lazy" className="h-full min-w-0 flex-1 object-cover" />
         ))}

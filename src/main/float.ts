@@ -30,6 +30,11 @@ export function getFloat(): FloatState {
   return state
 }
 
+/** While float mode is on: the window's size and place from before it, for saving at exit. */
+export function boundsBeforeFloat(): { bounds: Rectangle; maximized: boolean } | null {
+  return state.on && normalBounds ? { bounds: normalBounds, maximized: wasMaximized } : null
+}
+
 export function setFloat(next: FloatState): void {
   if (!win) return
   const w = win
