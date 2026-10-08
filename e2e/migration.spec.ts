@@ -34,7 +34,7 @@ test('v0.1 data opens: categories become tags, a backup is kept, sessions are un
   const page = await app.firstWindow()
   await page.getByRole('button', { name: 'Library' }).click()
   await expect(page.getByRole('group', { name: 'Filter by tag' }).getByRole('button', { name: 'Hands' })).toBeVisible()
-  await expect(page.getByText('Folder, hands')).toBeVisible()
+  await expect(page.getByText('Linked folder, hands')).toBeVisible()
   await page.getByRole('button', { name: 'Stats' }).click()
   await expect(page.getByText('Reviewed')).toBeVisible()
 

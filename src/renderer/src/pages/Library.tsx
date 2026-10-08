@@ -1,13 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
 import { thumbUrl } from '@shared/api'
-import { SUGGESTED_TAGS, type Board, type BoardKind, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
-import { ArrowLeft, Folder, Images, Link, Plus, Refresh, Trash } from '../components/Icons'
+import { SUGGESTED_TAGS, type Board, type BoardKind, type Folder, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
+import { ArrowLeft, ArrowRight, Close, Folder as FolderIcon, Images, Link, Plus, Refresh, Star, Trash } from '../components/Icons'
 import { TagEditor } from '../components/TagEditor'
-import { Button, Empty, PageHeader } from '../components/ui'
+import { Button, Empty, IconButton } from '../components/ui'
+import {
+  boardsIn,
+  canMoveFolder,
+  childFolders,
+  deleteFolder,
+  descendantIds,
+  dropShortcuts,
+  folderCover,
+  folderItemCount,
+  folderLabel,
+  folderPath,
+  foldersWithShortcut,
+  searchBoards,
+  shortcutsIn
+} from '../lib/library'
 import { uid, useApp } from '../store'
 
 const KIND_LABEL: Record<BoardKind, string> = {
-  folder: 'Folder',
+  folder: 'Linked folder',
   files: 'Images',
   pinterest: 'Pinterest',
   collection: 'Collection'
@@ -25,24 +40,40 @@ function mergeImages(existing: ImageRef[], added: ImageRef[]): ImageRef[] {
   return [...existing, ...added.filter((i) => !seen.has(i.id) && seen.add(i.id))]
 }
 
-export function Library({ boardId }: { boardId?: string }) {
+export function Library({ boardId, folderId }: { boardId?: string; folderId?: string }) {
   const board = useApp((s) => s.boards.find((b) => b.id === boardId))
-  return board ? <BoardDetail board={board} /> : <BoardList />
+  const folderExists = useApp((s) => !folderId || s.library.folders.some((f) => f.id === folderId))
+  if (board) return <BoardDetail board={board} />
+  return <BoardList folderId={folderExists ? folderId : undefined} />
 }
 
-function BoardList() {
+function BoardList({ folderId }: { folderId?: string }) {
   const boards = useApp((s) => s.boards)
+  const folders = useApp((s) => s.library.folders)
   const setBoards = useApp((s) => s.setBoards)
+  const setLibrary = useApp((s) => s.setLibrary)
   const go = useApp((s) => s.go)
   const notify = useApp((s) => s.notify)
-  const [filter, setFilter] = useState<string>('all')
+  const [query, setQuery] = useState('')
+  const [tag, setTag] = useState<string>('all')
+  const [favOnly, setFavOnly] = useState(false)
   const [pinterestOpen, setPinterestOpen] = useState(false)
+  const [newFolder, setNewFolder] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const shown = filter === 'all' ? boards : boards.filter((b) => b.tags.includes(filter))
+  const folder = folders.find((f) => f.id === folderId)
+  const path = folderPath(folders, folderId)
   const used = useMemo(() => [...new Set(boards.flatMap((b) => b.tags))].sort(), [boards])
+  const searching = query.trim() !== '' || tag !== 'all' || favOnly
+  const results = searching
+    ? searchBoards(boards, query).filter((b) => (tag === 'all' || b.tags.includes(tag)) && (!favOnly || b.favorite))
+    : []
+  const subfolders = childFolders(folders, folderId)
+  const here = boardsIn(boards, folderId)
+  const shortcuts = shortcutsIn(folders, boards, folderId)
 
   const create = (b: Omit<Board, 'id' | 'createdAt' | 'tags'> & { tags?: string[] }) => {
-    const board: Board = { tags: [], ...b, id: uid(), createdAt: Date.now() }
+    const board: Board = { tags: [], ...b, folderId, id: uid(), createdAt: Date.now() }
     setBoards((list) => [...list, board])
     return board
   }
@@ -69,11 +100,64 @@ function BoardList() {
     go({ name: 'library', boardId: b.id })
   }
 
+  const makeFolder = (name: string) => {
+    const f: Folder = { id: uid(), name: name.trim() || 'New folder', parentId: folderId, shortcuts: [], createdAt: Date.now() }
+    setLibrary((l) => ({ ...l, folders: [...l.folders, f] }))
+    setNewFolder(null)
+  }
+
+  const updateFolder = (patch: Partial<Folder>) =>
+    setLibrary((l) => ({ ...l, folders: l.folders.map((f) => (f.id === folderId ? { ...f, ...patch } : f)) }))
+
+  const removeFolder = () => {
+    if (!folderId) return
+    const out = deleteFolder(folders, boards, folderId)
+    setBoards(() => out.boards)
+    setLibrary((l) => ({ ...l, folders: out.folders }))
+    notify('Folder deleted. What was inside moved up one level.')
+    go({ name: 'library', folderId: folder?.parentId })
+  }
+
+  const removeShortcut = (boardId: string) =>
+    setLibrary((l) => ({
+      ...l,
+      folders: l.folders.map((f) => (f.id === folderId ? { ...f, shortcuts: f.shortcuts.filter((s) => s !== boardId) } : f))
+    }))
+
+  const empty = !subfolders.length && !here.length && !shortcuts.length
+
   return (
     <div className="page-wide">
-      <PageHeader title="Library">
+      {folder && (
+        <nav aria-label="Folder path" className="mb-3 flex flex-wrap items-center gap-1 text-muted">
+          <button type="button" onClick={() => go({ name: 'library' })} className="hover:text-ink">
+            Library
+          </button>
+          {path.slice(0, -1).map((f) => (
+            <span key={f.id} className="flex items-center gap-1">
+              <ArrowRight size={13} />
+              <button type="button" onClick={() => go({ name: 'library', folderId: f.id })} className="hover:text-ink">
+                {f.name}
+              </button>
+            </span>
+          ))}
+          <ArrowRight size={13} />
+        </nav>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 pb-5">
+        {folder ? (
+          <input
+            aria-label="Folder name"
+            value={folder.name}
+            onChange={(e) => updateFolder({ name: e.target.value })}
+            className="-ml-1 min-w-0 flex-1 rounded-md bg-transparent px-1 text-[22px] font-semibold tracking-[-0.01em] text-ink outline-none hover:bg-surface focus:bg-surface focus:ring-1 focus:ring-blue"
+          />
+        ) : (
+          <h1 className="mr-auto text-[22px] font-semibold tracking-[-0.01em] text-ink">Library</h1>
+        )}
         <Button onClick={addFolder}>
-          <Folder size={16} /> Add folder
+          <FolderIcon size={16} /> Add folder
         </Button>
         <Button onClick={() => setPinterestOpen(true)}>
           <Link size={16} /> Pinterest board
@@ -84,55 +168,259 @@ function BoardList() {
         <Button tone="ghost" onClick={addCollection}>
           <Plus size={16} /> New collection
         </Button>
-      </PageHeader>
+        {newFolder === null ? (
+          <Button tone="ghost" onClick={() => setNewFolder('')}>
+            <Plus size={16} /> New folder
+          </Button>
+        ) : (
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              makeFolder(newFolder)
+            }}
+          >
+            <input
+              autoFocus
+              aria-label="New folder name"
+              value={newFolder}
+              placeholder="Folder name, e.g. Human"
+              onChange={(e) => setNewFolder(e.target.value)}
+              onKeyDown={(e) => e.key === 'Escape' && setNewFolder(null)}
+              className="h-9 w-48 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
+            />
+            <Button type="submit">Create</Button>
+          </form>
+        )}
+      </div>
 
-      {pinterestOpen && <PinterestForm onClose={() => setPinterestOpen(false)} />}
-
-      {used.length > 0 && (
-        <div className="mb-5 flex flex-wrap gap-1.5" role="group" aria-label="Filter by tag">
-          {['all', ...used].map((c) => (
-            <button
-              key={c}
-              type="button"
-              aria-pressed={filter === c}
-              onClick={() => setFilter(c)}
-              className={`h-8 rounded-full px-3 text-[13px] ring-1 transition-colors ${
-                filter === c ? 'bg-blue-soft text-blue ring-blue' : 'text-muted ring-line hover:text-ink'
-              }`}
-            >
-              {c === 'all' ? 'All' : label(c)}
-            </button>
-          ))}
+      {folder && (
+        <div className="-mt-2 mb-5 flex flex-wrap items-center gap-3 text-muted">
+          <label className="flex items-center gap-2">
+            Inside
+            <FolderSelect
+              value={folder.parentId}
+              onChange={(parentId) => {
+                if (!canMoveFolder(folders, folder.id, parentId)) return notify('A folder can’t go inside itself.')
+                updateFolder({ parentId })
+              }}
+              exclude={folder.id}
+            />
+          </label>
+          {confirmDelete ? (
+            <span className="flex items-center gap-1">
+              <Button tone="danger" onClick={removeFolder}>
+                Delete folder (keep what’s inside)
+              </Button>
+              <Button tone="ghost" onClick={() => setConfirmDelete(false)}>
+                Keep it
+              </Button>
+            </span>
+          ) : (
+            <Button tone="ghost" onClick={() => setConfirmDelete(true)}>
+              <Trash size={16} /> Delete folder
+            </Button>
+          )}
         </div>
       )}
 
-      {!boards.length ? (
+      {pinterestOpen && <PinterestForm folderId={folderId} onClose={() => setPinterestOpen(false)} />}
+
+      {boards.length > 0 && (
+        <div className="mb-5 flex flex-wrap items-center gap-1.5">
+          <input
+            type="search"
+            aria-label="Search collections"
+            value={query}
+            placeholder="Search names and tags"
+            onChange={(e) => setQuery(e.target.value)}
+            className="mr-2 h-8 w-64 rounded-full bg-surface px-3.5 text-[13px] text-ink outline-none ring-1 ring-line placeholder:text-muted/70 focus:ring-blue"
+          />
+          <button
+            type="button"
+            aria-pressed={favOnly}
+            onClick={() => setFavOnly((v) => !v)}
+            className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] ring-1 transition-colors ${
+              favOnly ? 'bg-blue-soft text-blue ring-blue' : 'text-muted ring-line hover:text-ink'
+            }`}
+          >
+            <Star size={13} filled={favOnly} /> Favorites
+          </button>
+          {used.length > 0 && (
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by tag">
+              {['all', ...used].map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-pressed={tag === c}
+                  onClick={() => setTag(c)}
+                  className={`h-8 rounded-full px-3 text-[13px] ring-1 transition-colors ${
+                    tag === c ? 'bg-blue-soft text-blue ring-blue' : 'text-muted ring-line hover:text-ink'
+                  }`}
+                >
+                  {c === 'all' ? 'All' : label(c)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {searching ? (
+        results.length ? (
+          <TileGrid>
+            {results.map((b) => (
+              <BoardTile key={b.id} board={b} where={folderLabel(folders, b.folderId) || 'Library'} />
+            ))}
+          </TileGrid>
+        ) : (
+          <Empty title="Nothing matches">Try another word, or clear the filters.</Empty>
+        )
+      ) : !boards.length && !folders.length ? (
         <Empty title="Your library is empty">
           Add a folder of reference photos, paste a Pinterest board link, or start a collection you fill by dragging images from
           your browser.
         </Empty>
+      ) : empty ? (
+        <Empty title="This folder is empty">
+          Add collections here with the buttons above, or open a collection and choose this folder under “Folder”.
+        </Empty>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(clamp(240px,15vw,340px),1fr))] gap-5">
-          {shown.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              onClick={() => go({ name: 'library', boardId: b.id })}
-              className="group text-left"
-            >
-              <Mosaic images={b.images} />
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className="min-w-0 flex-1 truncate font-semibold text-ink group-hover:text-blue">{b.name}</span>
-                <span className="tnum text-[12.5px] text-muted">{b.images.length}</span>
-              </div>
-              <div className="text-[12.5px] text-muted">
-                {[KIND_LABEL[b.kind], ...b.tags].join(", ")}
-              </div>
-            </button>
+        <TileGrid>
+          {subfolders.map((f) => (
+            <FolderTile key={f.id} folder={f} />
           ))}
-        </div>
+          {here.map((b) => (
+            <BoardTile key={b.id} board={b} />
+          ))}
+          {shortcuts.map((b) => (
+            <BoardTile key={`s-${b.id}`} board={b} shortcut onRemoveShortcut={() => removeShortcut(b.id)} />
+          ))}
+        </TileGrid>
       )}
     </div>
+  )
+}
+
+function TileGrid({ children }: { children: React.ReactNode }) {
+  return <div className="grid grid-cols-[repeat(auto-fill,minmax(clamp(240px,15vw,340px),1fr))] gap-5">{children}</div>
+}
+
+function BoardTile({
+  board,
+  shortcut,
+  where,
+  onRemoveShortcut
+}: {
+  board: Board
+  shortcut?: boolean
+  /** Folder label, shown in search results. */
+  where?: string
+  onRemoveShortcut?: () => void
+}) {
+  const go = useApp((s) => s.go)
+  return (
+    <div className="group relative">
+      <button
+        type="button"
+        aria-label={`${board.name}${shortcut ? ', shortcut' : ''}, ${board.images.length} images`}
+        onClick={() => go({ name: 'library', boardId: board.id })}
+        className="block w-full text-left"
+      >
+        <div className="relative">
+          <Mosaic images={board.images} />
+          {shortcut && (
+            <span title="Shortcut: this collection lives in another folder" className="absolute bottom-2 left-2 flex h-6 items-center gap-1 rounded-md bg-bg/85 px-1.5 text-[12px] text-ink">
+              <Link size={12} /> Shortcut
+            </span>
+          )}
+          {board.favorite && (
+            <span className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-bg/85 text-blue" title="Favorite">
+              <Star size={13} filled />
+            </span>
+          )}
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate font-semibold text-ink group-hover:text-blue">{board.name}</span>
+          <span className="tnum text-[12.5px] text-muted">{board.images.length}</span>
+        </div>
+        <div className="truncate text-[12.5px] text-muted">{[KIND_LABEL[board.kind], ...board.tags].join(', ')}</div>
+        {where && <div className="truncate text-[12.5px] text-muted">In {where}</div>}
+      </button>
+      {onRemoveShortcut && (
+        <button
+          type="button"
+          onClick={onRemoveShortcut}
+          title="Remove the shortcut (the collection stays where it lives)"
+          className="absolute right-2 top-2 hidden h-7 items-center rounded-md bg-bg/90 px-2 text-[12px] text-muted hover:text-ink group-hover:flex"
+        >
+          Remove shortcut
+        </button>
+      )}
+    </div>
+  )
+}
+
+function FolderTile({ folder }: { folder: Folder }) {
+  const go = useApp((s) => s.go)
+  const boards = useApp((s) => s.boards)
+  const folders = useApp((s) => s.library.folders)
+  const cover = folderCover(folders, boards, folder.id)
+  const count = folderItemCount(folders, boards, folder.id)
+  return (
+    <button
+      type="button"
+      aria-label={`${folder.name}, folder, ${count === 1 ? '1 item' : `${count} items`}`}
+      onClick={() => go({ name: 'library', folderId: folder.id })}
+      className="group text-left"
+    >
+      <div className="relative">
+        {/* A second edge behind the cover, so a folder reads as a stack, not a single collection. */}
+        <div className="absolute inset-x-3 -top-1.5 h-4 rounded-t-md bg-raised ring-1 ring-line" />
+        <div className="relative">
+          <Mosaic images={cover} />
+        </div>
+        <span className="absolute bottom-2 left-2 flex h-6 items-center gap-1 rounded-md bg-bg/85 px-1.5 text-[12px] text-ink">
+          <FolderIcon size={12} /> Folder
+        </span>
+      </div>
+      <div className="mt-2 truncate font-semibold text-ink group-hover:text-blue">{folder.name}</div>
+      <div className="text-[12.5px] text-muted">{count === 1 ? '1 item' : `${count} items`}</div>
+    </button>
+  )
+}
+
+/** Pick a folder, shown with its full path; "Library" means the top level. */
+function FolderSelect({
+  value,
+  onChange,
+  exclude,
+  label: ariaLabel = 'Folder'
+}: {
+  value?: string
+  onChange: (id?: string) => void
+  exclude?: string
+  label?: string
+}) {
+  const folders = useApp((s) => s.library.folders)
+  const options = folders
+    .filter((f) => !exclude || !descendantIds(folders, exclude).has(f.id))
+    .map((f) => ({ id: f.id, label: folderLabel(folders, f.id) }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+  return (
+    <select
+      aria-label={ariaLabel}
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      className="h-9 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
+    >
+      <option value="">Library (top level)</option>
+      {options.map((o) => (
+        <option key={o.id} value={o.id}>
+          {o.label}
+        </option>
+      ))}
+    </select>
   )
 }
 
@@ -178,7 +466,7 @@ function Cover({ img, className = '', size = 240 }: { img: ImageRef; className?:
   )
 }
 
-function PinterestForm({ onClose }: { onClose: () => void }) {
+function PinterestForm({ onClose, folderId }: { onClose: () => void; folderId?: string }) {
   const setBoards = useApp((s) => s.setBoards)
   const go = useApp((s) => s.go)
   const notify = useApp((s) => s.notify)
@@ -200,6 +488,7 @@ function PinterestForm({ onClose }: { onClose: () => void }) {
         name: result.name,
         kind: 'pinterest',
         tags: [],
+        folderId,
         source: url.trim(),
         images: result.images,
         createdAt: Date.now(),
@@ -283,6 +572,9 @@ function BoardDetail({ board }: { board: Board }) {
   const allTags = useMemo(() => tagSuggestions(allBoards), [allBoards])
   const updateBoard = useApp((s) => s.updateBoard)
   const setBoards = useApp((s) => s.setBoards)
+  const folders = useApp((s) => s.library.folders)
+  const favoriteImages = useApp((s) => s.library.favoriteImages)
+  const setLibrary = useApp((s) => s.setLibrary)
   const go = useApp((s) => s.go)
   const notify = useApp((s) => s.notify)
   const [busy, setBusy] = useState(false)
@@ -358,9 +650,35 @@ function BoardDetail({ board }: { board: Board }) {
 
   const remove = () => {
     setBoards((list) => list.filter((b) => b.id !== board.id))
+    setLibrary((l) => ({ ...l, folders: dropShortcuts(l.folders, board.id) }))
     if (board.kind === 'pinterest' || board.kind === 'collection') void window.api.removeBoardFiles(board.id)
-    go({ name: 'library' })
+    go({ name: 'library', folderId: board.folderId })
   }
+
+  const home = folders.find((f) => f.id === board.folderId)
+  const alsoIn = foldersWithShortcut(folders, board.id)
+
+  const moveTo = (folderId?: string) => {
+    updateBoard(board.id, { folderId })
+    // A shortcut in its new home would be a duplicate.
+    if (folderId) setShortcut(folderId, false)
+  }
+
+  const setShortcut = (folderId: string, on: boolean) =>
+    setLibrary((l) => ({
+      ...l,
+      folders: l.folders.map((f) =>
+        f.id !== folderId
+          ? f
+          : { ...f, shortcuts: on ? [...new Set([...f.shortcuts, board.id])] : f.shortcuts.filter((x) => x !== board.id) }
+      )
+    }))
+
+  const toggleFavoriteImage = (id: string) =>
+    setLibrary((l) => ({
+      ...l,
+      favoriteImages: l.favoriteImages.includes(id) ? l.favoriteImages.filter((x) => x !== id) : [...l.favoriteImages, id]
+    }))
 
   const removeImage = (id: string) => updateBoard(board.id, { images: board.images.filter((i) => i.id !== id) })
 
@@ -382,8 +700,12 @@ function BoardDetail({ board }: { board: Board }) {
         void importData(e.dataTransfer)
       }}
     >
-      <button type="button" onClick={() => go({ name: 'library' })} className="mb-3 inline-flex items-center gap-1 text-muted hover:text-ink">
-        <ArrowLeft size={15} /> Library
+      <button
+        type="button"
+        onClick={() => go({ name: 'library', folderId: board.folderId })}
+        className="mb-3 inline-flex items-center gap-1 text-muted hover:text-ink"
+      >
+        <ArrowLeft size={15} /> {home ? folderLabel(folders, home.id) : 'Library'}
       </button>
       <div className="flex flex-wrap items-center gap-3 pb-2">
         <input
@@ -392,6 +714,13 @@ function BoardDetail({ board }: { board: Board }) {
           onChange={(e) => updateBoard(board.id, { name: e.target.value })}
           className="-ml-1 min-w-0 flex-1 rounded-md bg-transparent px-1 text-[22px] font-semibold tracking-[-0.01em] text-ink outline-none hover:bg-surface focus:bg-surface focus:ring-1 focus:ring-blue"
         />
+        <IconButton
+          label={board.favorite ? 'Remove from favorites' : 'Add to favorites'}
+          active={board.favorite}
+          onClick={() => updateBoard(board.id, { favorite: !board.favorite })}
+        >
+          <Star size={17} filled={board.favorite} />
+        </IconButton>
         {(board.kind === 'folder' || board.kind === 'pinterest') && (
           <Button onClick={resync} disabled={busy}>
             <Refresh size={16} /> {busy ? (progress ? progressText(progress) : 'Syncing…') : board.kind === 'folder' ? 'Rescan folder' : 'Sync again'}
@@ -423,8 +752,49 @@ function BoardDetail({ board }: { board: Board }) {
         {board.kind === 'pinterest' && ' (saved on this computer)'}
         {board.kind === 'folder' && '. Your files stay where they are; deleting the board does not delete them.'}
       </p>
-      <div className="pb-5">
+      <div className="pb-3">
         <TagEditor tags={board.tags} onChange={(tags) => updateBoard(board.id, { tags })} suggestions={allTags} />
+      </div>
+      <div className="flex flex-wrap items-center gap-3 pb-5 text-muted">
+        <label className="flex items-center gap-2">
+          Folder
+          <FolderSelect value={board.folderId} onChange={moveTo} />
+        </label>
+        {folders.length > 0 && (
+          <label className="flex items-center gap-2">
+            Also show in
+            <select
+              aria-label="Add a shortcut in another folder"
+              value=""
+              onChange={(e) => e.target.value && setShortcut(e.target.value, true)}
+              className="h-9 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
+            >
+              <option value="">Add a shortcut…</option>
+              {folders
+                .filter((f) => f.id !== board.folderId && !f.shortcuts.includes(board.id))
+                .map((f) => ({ id: f.id, label: folderLabel(folders, f.id) }))
+                .sort((a, b) => a.label.localeCompare(b.label))
+                .map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
+        {alsoIn.map((f) => (
+          <span key={f.id} className="inline-flex h-7 items-center gap-1 rounded-full bg-raised pl-3 pr-1 text-[13px] text-ink">
+            <Link size={12} /> {folderLabel(folders, f.id)}
+            <button
+              type="button"
+              aria-label={`Remove the shortcut in ${f.name}`}
+              onClick={() => setShortcut(f.id, false)}
+              className="flex h-5 w-5 items-center justify-center rounded-full text-muted hover:bg-line hover:text-ink"
+            >
+              <Close size={12} />
+            </button>
+          </span>
+        ))}
       </div>
 
       {canDrop && (
@@ -449,6 +819,17 @@ function BoardDetail({ board }: { board: Board }) {
                 aria-label={`Open image ${i + 1}`}
               >
                 <img src={thumbUrl(img.path, 320)} alt="" loading="lazy" className="h-full w-full object-cover" />
+              </button>
+              <button
+                type="button"
+                aria-label={favoriteImages.includes(img.id) ? 'Remove image from favorites' : 'Add image to favorites'}
+                aria-pressed={favoriteImages.includes(img.id)}
+                onClick={() => toggleFavoriteImage(img.id)}
+                className={`absolute left-1.5 top-1.5 h-7 w-7 items-center justify-center rounded-md bg-bg/85 ${
+                  favoriteImages.includes(img.id) ? 'flex text-blue' : 'hidden text-muted hover:text-ink group-hover:flex'
+                }`}
+              >
+                <Star size={14} filled={favoriteImages.includes(img.id)} />
               </button>
               {canDrop && (
                 <button

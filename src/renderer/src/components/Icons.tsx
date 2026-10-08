@@ -161,6 +161,14 @@ export const ArrowRight = (p: IconProps) => (
     <path d="M9 5l7 7-7 7" />
   </Icon>
 )
+export const Star = ({ filled, ...p }: IconProps & { filled?: boolean }) => (
+  <Icon {...p}>
+    <path
+      d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"
+      fill={filled ? 'currentColor' : 'none'}
+    />
+  </Icon>
+)
 export const Pen = (p: IconProps) => (
   <Icon {...p}>
     <path d="M4 20l1.2-4.6L15.6 5a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z" />

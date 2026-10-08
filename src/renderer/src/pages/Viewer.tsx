@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ArrowRight, Close, Float, Flip, Grey } from '../components/Icons'
+import { ArrowLeft, ArrowRight, Close, Float, Flip, Grey, Star } from '../components/Icons'
 import { Stage } from '../components/Stage'
 import { IconButton } from '../components/ui'
 import { useApp } from '../store'
@@ -10,6 +10,8 @@ export function Viewer({ boardId, index }: { boardId: string; index: number }) {
   const go = useApp((s) => s.go)
   const float = useApp((s) => s.float)
   const setFloat = useApp((s) => s.setFloat)
+  const favoriteImages = useApp((s) => s.library.favoriteImages)
+  const setLibrary = useApp((s) => s.setLibrary)
   const [flip, setFlip] = useState(false)
   const [grey, setGrey] = useState(false)
 
@@ -34,6 +36,12 @@ export function Viewer({ boardId, index }: { boardId: string; index: number }) {
 
   if (!board || !count) return null
   const img = board.images[Math.min(index, count - 1)]
+  const favorite = favoriteImages.includes(img.id)
+  const toggleFavorite = () =>
+    setLibrary((l) => ({
+      ...l,
+      favoriteImages: favorite ? l.favoriteImages.filter((x) => x !== img.id) : [...l.favoriteImages, img.id]
+    }))
 
   return (
     <Stage
@@ -53,6 +61,9 @@ export function Viewer({ boardId, index }: { boardId: string; index: number }) {
       </IconButton>
       <IconButton label="Next (→)" onClick={() => step(1)}>
         <ArrowRight size={17} />
+      </IconButton>
+      <IconButton label={favorite ? 'Remove from favorites' : 'Add to favorites'} active={favorite} onClick={toggleFavorite}>
+        <Star size={17} filled={favorite} />
       </IconButton>
       <span className="mx-1 h-5 w-px bg-line" />
       <IconButton label="Flip (F)" active={flip} onClick={() => setFlip((v) => !v)}>
