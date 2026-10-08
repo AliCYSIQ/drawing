@@ -170,6 +170,7 @@ export function MemorySession() {
   return (
     <Stage
       path={studying && !peekHidden ? slot.imagePath : null}
+      fallback={slot.fallbackPath}
       flip={flip}
       grey={grey}
       overlay={
@@ -298,6 +299,7 @@ function Reveal({ leave }: { leave: (fn: (s: MemoryState, now: number) => Memory
         <Compare
           key={idx}
           referencePath={slot.imagePath}
+          referenceFallback={slot.fallbackPath}
           sources={drawingSources(result)}
           earlier={earlier}
           marks={result.marks ?? {}}

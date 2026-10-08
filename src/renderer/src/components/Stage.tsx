@@ -20,12 +20,15 @@ const CLICK_SLOP = 4
  */
 export function Stage({
   path,
+  fallback,
   flip,
   grey,
   children,
   overlay
 }: {
   path: string | null
+  /** Kept copy, shown if the file at path is gone. */
+  fallback?: string
   flip?: boolean
   grey?: boolean
   /** Controls shown at the bottom on hover. */
@@ -87,7 +90,7 @@ export function Stage({
       {path && (
         <img
           key={path}
-          src={imageUrl(path)}
+          src={imageUrl(path, fallback)}
           alt="Reference"
           draggable={false}
           className="pose-in absolute inset-0 h-full w-full object-contain"

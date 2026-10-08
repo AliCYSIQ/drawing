@@ -112,6 +112,7 @@ export function Session() {
   return (
     <Stage
       path={resting ? null : slot?.imagePath ?? null}
+      fallback={slot?.fallbackPath}
       flip={flip}
       grey={grey}
       overlay={

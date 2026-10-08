@@ -47,6 +47,7 @@ export function drawingSources(pose: PoseResult, pagePhotos: string[] = []): Dra
 
 export function Compare({
   referencePath,
+  referenceFallback,
   sources,
   earlier = [],
   marks,
@@ -56,6 +57,8 @@ export function Compare({
   emptyHint
 }: {
   referencePath: string
+  /** Kept copy of the reference, shown if the original is gone. */
+  referenceFallback?: string
   /** Your drawing, in every form it exists (capture, photos). */
   sources: DrawingSource[]
   /** Earlier tries at the same reference, shown read-only between the two. */
@@ -178,10 +181,10 @@ export function Compare({
 
       <div className={`flex min-h-0 flex-1 gap-3 rounded-md ${dragOver ? 'outline-2 outline-dashed outline-blue' : ''}`}>
         {source && mode === 'overlay' ? (
-          <Overlay reference={imageUrl(referencePath)} drawing={source} strokes={strokes} />
+          <Overlay reference={imageUrl(referencePath, referenceFallback)} drawing={source} strokes={strokes} />
         ) : (
           <>
-            <ZoomPane label="Reference" src={imageUrl(referencePath)} />
+            <ZoomPane label="Reference" src={imageUrl(referencePath, referenceFallback)} />
             {earlier.map((e) => (
               <ZoomPane key={e.path} label={e.label} src={imageUrl(e.path)} strokes={e.strokes} legacyMarkup={e.legacyMarkup} />
             ))}

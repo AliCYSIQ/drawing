@@ -64,6 +64,10 @@ function BoardList({ folderId }: { folderId?: string }) {
   const [sheet, setSheet] = useState<FolderInfo | null>(null)
   const updateSettings = useApp((s) => s.updateSettings)
 
+  useEffect(() => {
+    void useApp.getState().checkMissing()
+  }, [])
+
   const folder = folders.find((f) => f.id === folderId)
   const path = folderPath(folders, folderId)
   const used = useMemo(() => [...new Set(boards.flatMap((b) => b.tags))].sort(), [boards])
@@ -387,6 +391,7 @@ function BoardTile({
   onRemoveShortcut?: () => void
 }) {
   const go = useApp((s) => s.go)
+  const missing = useApp((s) => s.missing[board.id]?.length ?? 0)
   return (
     <div className="group relative">
       <button
@@ -405,6 +410,11 @@ function BoardTile({
           {board.favorite && (
             <span className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-bg/85 text-blue" title="Favorite">
               <Star size={13} filled />
+            </span>
+          )}
+          {missing > 0 && (
+            <span className="absolute bottom-2 right-2 flex h-6 items-center rounded-md bg-bg/90 px-1.5 text-[12px] text-red">
+              {missing} missing
             </span>
           )}
         </div>
@@ -649,13 +659,44 @@ function BoardDetail({ board }: { board: Board }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const progress = usePinterestProgress(board.id)
   const [dragOver, setDragOver] = useState(false)
+  const missingIds = useApp((s) => s.missing[board.id])
+  const missing = useMemo(() => new Set(missingIds ?? []), [missingIds])
+
+  useEffect(() => {
+    void useApp.getState().checkMissing()
+  }, [board.id])
+
+  /** Rescanned images keep the ids they had, so favorites and history still match after a relink. */
+  const keepIds = (scanned: ImageRef[]) => {
+    const byPath = new Map(board.images.map((i) => [i.path.toLowerCase(), i]))
+    return scanned.map((r) => byPath.get(r.path.toLowerCase()) ?? r)
+  }
+
+  /** The folder was moved or renamed: find it again and point every image at its new place. */
+  const findFolder = async () => {
+    const dir = await window.api.pickFolder()
+    if (!dir || !board.source) return
+    const found = await window.api.relinkFolder(board.source, dir, board.images.map((i) => i.path))
+    const count = found.filter(Boolean).length
+    if (!count) return notify('None of the images are in that folder. Pick the folder this collection came from.')
+    updateBoard(board.id, { source: dir, images: board.images.map((img, k) => (found[k] ? { ...img, path: found[k]! } : img)) })
+    notify(`Found ${count} of ${board.images.length} images in the new place.`)
+    void useApp.getState().checkMissing()
+  }
+
+  const removeMissing = () => {
+    updateBoard(board.id, { images: board.images.filter((i) => !missing.has(i.id)) })
+    notify(`Removed ${missing.size} missing ${missing.size === 1 ? 'image' : 'images'} from the collection.`)
+    void useApp.getState().checkMissing()
+  }
 
   const resync = async () => {
     setBusy(true)
     try {
       if (board.kind === 'folder' && board.source) {
-        const images = await window.api.scanFolder(board.source, board.recursive !== false)
+        const images = keepIds(await window.api.scanFolder(board.source, board.recursive !== false))
         updateBoard(board.id, { images, syncedAt: Date.now() })
+        void useApp.getState().checkMissing()
         notify(`${images.length} images in the folder.`)
       } else if (board.kind === 'pinterest' && board.source) {
         const r = await window.api.importPinterest(board.id, board.source)
@@ -663,7 +704,7 @@ function BoardDetail({ board }: { board: Board }) {
         notify(syncMessage(r))
       }
     } catch (err) {
-      notify(cleanError(err))
+      notify(board.kind === 'folder' ? 'The folder can’t be found. If you moved or renamed it, use Find folder.' : cleanError(err))
     } finally {
       setBusy(false)
     }
@@ -883,6 +924,20 @@ function BoardDetail({ board }: { board: Board }) {
         ))}
       </div>
 
+      {missing.size > 0 && (
+        <div role="alert" className="mb-5 flex flex-wrap items-center gap-3 rounded-lg bg-red/10 px-4 py-3 ring-1 ring-red/40">
+          <span className="mr-auto text-ink">
+            {missing.size} of {board.images.length} images can’t be found
+            {board.kind === 'folder' ? '. If you moved or renamed the folder, find it again.' : ': they were moved or deleted outside the app.'}{' '}
+            Sessions skip them; old sessions still show their kept copies.
+          </span>
+          {board.kind === 'folder' && <Button onClick={findFolder}>Find folder…</Button>}
+          <Button tone="ghost" onClick={removeMissing}>
+            Remove missing
+          </Button>
+        </div>
+      )}
+
       {canDrop && (
         <div
           className={`mb-5 rounded-lg border border-dashed px-4 py-5 text-center transition-colors ${
@@ -904,7 +959,14 @@ function BoardDetail({ board }: { board: Board }) {
                 className="block aspect-[3/4] w-full overflow-hidden rounded-md bg-surface ring-1 ring-line hover:ring-blue"
                 aria-label={`Open image ${i + 1}`}
               >
-                <img src={thumbUrl(img.path, 320)} alt="" loading="lazy" className="h-full w-full object-cover" />
+                {missing.has(img.id) ? (
+                  <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-[12.5px] text-red">
+                    <Images size={20} />
+                    Missing
+                  </span>
+                ) : (
+                  <img src={thumbUrl(img.path, 320)} alt="" loading="lazy" className="h-full w-full object-cover" />
+                )}
               </button>
               <button
                 type="button"

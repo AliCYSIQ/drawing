@@ -20,6 +20,12 @@ export interface Api {
   /** recursive (default true): include images in sub-folders. */
   scanFolder(dir: string, recursive?: boolean): Promise<ImageRef[]>
   inspectFolder(dir: string): Promise<FolderInfo>
+  /** Which of these files no longer exist. */
+  missingFiles(paths: string[]): Promise<string[]>
+  /** New paths for images after their folder moved (null where not found). */
+  relinkFolder(oldDir: string, newDir: string, paths: string[]): Promise<(string | null)[]>
+  /** Keep a smaller copy of a practiced reference for history; returns its path. */
+  keepReference(imageId: string, path: string): Promise<string | null>
   /** Copy images into the app's folder for a collection; ids stay the same. */
   copyImages(boardId: string, refs: ImageRef[], baseDir?: string): Promise<ImageRef[]>
   refsForFiles(paths: string[]): Promise<ImageRef[]>
@@ -64,10 +70,13 @@ export interface Api {
 }
 
 /** URL the renderer uses to show a local image. */
-export function imageUrl(path: string): string {
-  return `ref://image/?path=${encodeURIComponent(path)}`
+/** `fallback` (a kept copy) is shown if the file at `path` is gone. */
+export function imageUrl(path: string, fallback?: string): string {
+  const extra = fallback ? `&fallback=${encodeURIComponent(fallback)}` : ''
+  return `ref://image/?path=${encodeURIComponent(path)}${extra}`
 }
 
-export function thumbUrl(path: string, size = 320): string {
-  return `ref://thumb/?path=${encodeURIComponent(path)}&size=${size}`
+export function thumbUrl(path: string, size = 320, fallback?: string): string {
+  const extra = fallback ? `&fallback=${encodeURIComponent(fallback)}` : ''
+  return `ref://thumb/?path=${encodeURIComponent(path)}&size=${size}${extra}`
 }

@@ -13,7 +13,7 @@ import {
   slotsForPlan
 } from '../lib/schedule'
 import { currentStreak, dayKey, minutesByDay, recentMistakes } from '../lib/stats'
-import { initialPlan, uid, useApp } from '../store'
+import { availablePool, initialPlan, uid, useApp } from '../store'
 
 const TIMES = [30, 60, 120, 300, 600]
 
@@ -35,7 +35,11 @@ export function Practice() {
   const [presetName, setPresetName] = useState<string | null>(null)
   const setPlan = (patch: Partial<SessionPlan>) => setPlanState((p) => ({ ...p, ...patch }))
 
-  const pool = useMemo(() => poolFromBoards(boards, plan.boardIds), [boards, plan.boardIds])
+  const missing = useApp((s) => s.missing)
+  const allImages = useMemo(() => poolFromBoards(boards, plan.boardIds), [boards, plan.boardIds])
+  // Images whose file is gone are skipped.
+  const pool = useMemo(() => availablePool({ boards, missing }, allImages), [boards, missing, allImages])
+  const skipped = allImages.length - pool.length
   const blocks = planBlocks(plan, pool.length)
   const poses = blocks.reduce((a, b) => a + b.count, 0)
   const seconds = estimateSeconds(blocks, plan.rest.enabled ? plan.rest.seconds : 0)
@@ -262,6 +266,11 @@ export function Practice() {
             Start drawing
           </Button>
           {!pool.length && <p className="mt-2.5 text-[12.5px] text-muted">Pick at least one board with images.</p>}
+          {skipped > 0 && (
+            <p className="mt-2.5 text-[12.5px] text-muted">
+              {skipped} {skipped === 1 ? 'image is' : 'images are'} missing on disk and will be skipped.
+            </p>
+          )}
           {needsRegion && <p className="mt-2.5 text-[12.5px] text-muted">Pick the canvas area first, or turn capture off.</p>}
         </div>
 

@@ -148,6 +148,8 @@ export interface PoseResult {
   attempt?: number
   /** Memory mode: time spent studying before this attempt. */
   studyMs?: number
+  /** A smaller copy of the reference kept by the app; shown if the original is gone. */
+  keptPath?: string
 }
 
 export interface SessionRecord {

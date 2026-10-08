@@ -76,7 +76,7 @@ export function Review({ sessionId }: { sessionId: string }) {
     updateSession(session.id, (s) => ({ ...s, reviewed: true }))
     startRun({
       plan: { ...session.plan, review: true },
-      slots: flagged.map((p) => ({ imageId: p.imageId, imagePath: p.imagePath, seconds: p.plannedSeconds || 60 })),
+      slots: flagged.map((p) => ({ imageId: p.imageId, imagePath: p.imagePath, fallbackPath: p.keptPath, seconds: p.plannedSeconds || 60 })),
       redoOf: session.id
     })
   }
@@ -143,7 +143,7 @@ export function Review({ sessionId }: { sessionId: string }) {
                 k === i ? 'ring-blue' : 'ring-transparent hover:ring-line'
               }`}
             >
-              <img src={thumbUrl(p.imagePath, 200)} alt={`Pose ${k + 1}`} className="h-full w-full object-cover" />
+              <img src={thumbUrl(p.imagePath, 200, p.keptPath)} alt={`Pose ${k + 1}`} className="h-full w-full object-cover" />
               <span className="tnum absolute bottom-1 left-1 rounded bg-bg/85 px-1 text-[11px] text-ink">
                 {p.attempt ? `try ${p.attempt}` : k + 1}
               </span>
@@ -160,6 +160,7 @@ export function Review({ sessionId }: { sessionId: string }) {
         <Compare
           key={i}
           referencePath={pose.imagePath}
+          referenceFallback={pose.keptPath}
           sources={drawingSources(pose, session.pagePhotos)}
           earlier={earlierTries(session, pose, original)}
           marks={pose.marks ?? {}}

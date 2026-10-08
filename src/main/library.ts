@@ -139,6 +139,56 @@ export async function removeBoardFiles(boardId: string): Promise<void> {
   await rm(pinterestDir(boardId), { recursive: true, force: true })
 }
 
+/** Which of these files no longer exist. */
+export async function missingFiles(paths: string[]): Promise<string[]> {
+  const gone: string[] = []
+  const batch = 64
+  for (let i = 0; i < paths.length; i += batch) {
+    const part = paths.slice(i, i + batch)
+    const found = await Promise.all(part.map((p) => stat(p).then(() => true, () => false)))
+    part.forEach((p, k) => !found[k] && gone.push(p))
+  }
+  return gone
+}
+
+/**
+ * Keep a copy (at most 1600 px, once per image) of a reference that was
+ * practiced, so history and review still show it after the original is
+ * moved or deleted. Returns the copy's path, or null if it can't be made.
+ */
+export async function keepReference(imageId: string, path: string): Promise<string | null> {
+  const out = dataDir('kept', `${imageId.replace(/[^a-zA-Z0-9_-]/g, '')}.jpg`)
+  if (existsSync(out)) return out
+  let img = nativeImage.createFromPath(path)
+  if (img.isEmpty()) {
+    // nativeImage only reads PNG/JPEG; Windows' thumbnailer handles WebP and the rest.
+    img = await nativeImage.createThumbnailFromPath(path, { width: 1600, height: 1600 }).catch(() => nativeImage.createEmpty())
+  }
+  if (img.isEmpty()) return null
+  const { width, height } = img.getSize()
+  if (Math.max(width, height) > 1600) {
+    img = width >= height ? img.resize({ width: 1600, quality: 'good' }) : img.resize({ height: 1600, quality: 'good' })
+  }
+  await mkdir(dataDir('kept'), { recursive: true })
+  await writeFile(out, img.toJPEG(88))
+  return out
+}
+
+/**
+ * After a folder was moved: find each image at the same place relative to
+ * the new folder. Returns the new path, or null where it isn't there.
+ */
+export async function relinkFolder(oldDir: string, newDir: string, paths: string[]): Promise<(string | null)[]> {
+  const lower = oldDir.toLowerCase()
+  return Promise.all(
+    paths.map(async (p) => {
+      const rel = p.toLowerCase().startsWith(lower) ? p.slice(oldDir.length).replace(/^[\\/]+/, '') : p.split(/[\\/]/).pop()!
+      const candidate = join(newDir, rel)
+      return stat(candidate).then(() => candidate, () => null)
+    })
+  )
+}
+
 /** Copy review photos into the data folder so they survive the originals being moved. */
 export async function keepPhoto(sessionId: string, src: string): Promise<string> {
   const dir = dataDir('photos', safeName(sessionId))

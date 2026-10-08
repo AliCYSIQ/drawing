@@ -9,6 +9,7 @@ import {
   type Challenge,
   type FloatState,
   type HotkeyAction,
+  type ImageRef,
   type LibraryMeta,
   type PoseResult,
   type Preset,
@@ -66,6 +67,9 @@ interface State {
   hotkeyStatus: Record<HotkeyAction, boolean>
   run: Run | null
   toast: Toast | null
+  /** Image ids per collection whose file can't be found (checked, not saved). */
+  missing: Record<string, string[]>
+  checkMissing(): Promise<void>
 
   init(): Promise<void>
   go(view: View): void
@@ -113,6 +117,7 @@ export const useApp = create<State>((set, get) => ({
   float: DEFAULT_FLOAT,
   hotkeyStatus: { clickThrough: true, float: true, pause: true, next: true },
   run: null,
+  missing: {},
   toast: null,
 
   async init() {
@@ -157,6 +162,18 @@ export const useApp = create<State>((set, get) => ({
       }
     })
     set({ hotkeyStatus: await api.setHotkeys(settings.hotkeys) })
+    void get().checkMissing()
+  },
+
+  async checkMissing() {
+    const boards = get().boards
+    const gone = new Set(await window.api.missingFiles(boards.flatMap((b) => b.images.map((i) => i.path))))
+    const missing: Record<string, string[]> = {}
+    for (const b of boards) {
+      const ids = b.images.filter((i) => gone.has(i.path)).map((i) => i.id)
+      if (ids.length) missing[b.id] = ids
+    }
+    set({ missing })
   },
 
   go(view) {
@@ -316,6 +333,9 @@ export const useApp = create<State>((set, get) => ({
       settings: run.challenge || run.redoOf ? get().settings : { ...get().settings, lastPlan: run.plan },
       view: run.plan.review ? { name: 'review', sessionId: record.id } : run.returnTo
     })
+    // Keep a copy of each practiced reference so this session's history and
+    // review still show it if the original is later moved or deleted.
+    void keepReferences(record)
     if (run.challenge && finished) get().notify(`Level ${run.challenge.level + 1} done. The next level is open.`)
     else if (!run.plan.review) get().notify('Session saved.')
   }
@@ -331,6 +351,26 @@ useApp.subscribe((state, prev) => {
     state.setFloat({ on: false, clickThrough: false })
   }
 })
+
+async function keepReferences(record: SessionRecord): Promise<void> {
+  const kept = new Map<string, string>()
+  for (const p of record.poses) {
+    if (kept.has(p.imageId)) continue
+    const path = await window.api.keepReference(p.imageId, p.imagePath)
+    if (path) kept.set(p.imageId, path)
+  }
+  if (!kept.size) return
+  useApp.getState().updateSession(record.id, (s) => ({
+    ...s,
+    poses: s.poses.map((p) => (kept.has(p.imageId) ? { ...p, keptPath: kept.get(p.imageId) } : p))
+  }))
+}
+
+/** All images of these collections that can still be found (missing ones are skipped in sessions). */
+export function availablePool(state: Pick<State, 'boards' | 'missing'>, pool: ImageRef[]): ImageRef[] {
+  const gone = new Set(Object.values(state.missing).flat())
+  return gone.size ? pool.filter((i) => !gone.has(i.id)) : pool
+}
 
 // Save each collection shortly after it changes.
 const timers = new Map<StoreName, ReturnType<typeof setTimeout>>()
