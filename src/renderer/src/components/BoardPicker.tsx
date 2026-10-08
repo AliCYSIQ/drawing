@@ -1,13 +1,32 @@
+import { useMemo, useState } from 'react'
 import { thumbUrl } from '@shared/api'
 import type { Board } from '@shared/types'
+import { folderLabel, searchBoards } from '../lib/library'
 import { useApp } from '../store'
 import { Check } from './Icons'
 import { Button } from './ui'
 
-/** Choose one or more boards; each shows a strip of its first images. */
+/**
+ * Choose one or more collections; each shows a strip of its first images.
+ * Collections are grouped by folder, and a search field appears once there
+ * are many.
+ */
 export function BoardPicker({ value, onChange }: { value: string[]; onChange: (ids: string[]) => void }) {
   const boards = useApp((s) => s.boards)
+  const folders = useApp((s) => s.library.folders)
   const go = useApp((s) => s.go)
+  const [query, setQuery] = useState('')
+
+  const groups = useMemo(() => {
+    const map = new Map<string, Board[]>()
+    for (const b of searchBoards(boards, query)) {
+      const key = folderLabel(folders, b.folderId)
+      map.set(key, [...(map.get(key) ?? []), b])
+    }
+    return [...map.entries()]
+      .sort(([a], [b]) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)))
+      .map(([label, list]) => ({ label, boards: list.sort((x, y) => x.name.localeCompare(y.name)) }))
+  }, [boards, folders, query])
 
   if (!boards.length) {
     return (
@@ -22,11 +41,31 @@ export function BoardPicker({ value, onChange }: { value: string[]; onChange: (i
 
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id])
 
+  const grouped = groups.length > 1 || (groups.length === 1 && groups[0].label !== '')
+
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(clamp(190px,13vw,260px),1fr))] gap-2.5">
-      {boards.map((b) => (
-        <BoardChip key={b.id} board={b} selected={value.includes(b.id)} onClick={() => toggle(b.id)} />
+    <div className="grid gap-3">
+      {boards.length > 8 && (
+        <input
+          type="search"
+          aria-label="Search collections"
+          value={query}
+          placeholder="Search collections"
+          onChange={(e) => setQuery(e.target.value)}
+          className="h-8 w-64 rounded-full bg-surface px-3.5 text-[13px] text-ink outline-none ring-1 ring-line placeholder:text-muted/70 focus:ring-blue"
+        />
+      )}
+      {groups.map((g) => (
+        <section key={g.label} aria-label={g.label || 'Library'}>
+          {grouped && <h3 className="pb-1.5 text-[12.5px] text-muted">{g.label || 'Library'}</h3>}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(clamp(190px,13vw,260px),1fr))] gap-2.5">
+            {g.boards.map((b) => (
+              <BoardChip key={b.id} board={b} selected={value.includes(b.id)} onClick={() => toggle(b.id)} />
+            ))}
+          </div>
+        </section>
       ))}
+      {!groups.length && <p className="text-muted">No collection matches “{query}”.</p>}
     </div>
   )
 }

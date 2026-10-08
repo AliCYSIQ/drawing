@@ -101,7 +101,7 @@ const stage = () => page.locator('.stage')
 test('float mode: controls show on click, not hover, and it turns off', async () => {
   await page.getByRole('button', { name: 'Done' }).click()
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: /pose|Folder/ }).first().click()
+  await page.getByRole('button', { name: /^drawing-refs-/ }).first().click()
   await page.getByRole('button', { name: 'Open image 1' }).click()
   await page.getByRole('button', { name: 'Float on top' }).click()
   expect((await windowState()).onTop).toBe(true)

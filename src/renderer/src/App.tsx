@@ -66,7 +66,7 @@ export function App() {
       page = <Practice />
       break
     case 'library':
-      page = <Library boardId={view.boardId} />
+      page = <Library key={view.folderId ?? "top"} boardId={view.boardId} folderId={view.folderId} />
       break
     case 'viewer':
       page = <Viewer boardId={view.boardId} index={view.index} />
