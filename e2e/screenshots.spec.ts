@@ -27,11 +27,19 @@ test('screens', async () => {
   // Electron's own capture: Playwright's screenshot can come out stale or
   // cropped after the window is resized or zoomed.
   const shot = async (name: string) => {
-    const png = await app.evaluate(async ({ BrowserWindow }) => {
-      const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage()
-      return img.toPNG().toString('base64')
-    })
-    writeFileSync(join(out!, `${name}.png`), Buffer.from(png, 'base64'))
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const png = await app.evaluate(async ({ BrowserWindow }) => {
+          const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage()
+          return img.toPNG().toString('base64')
+        })
+        writeFileSync(join(out!, `${name}.png`), Buffer.from(png, 'base64'))
+        return
+      } catch {
+        await page.waitForTimeout(400) // the GPU can be briefly busy
+      }
+    }
+    await page.screenshot({ path: join(out!, `${name}.png`) })
   }
 
   await shot('01-practice-empty')

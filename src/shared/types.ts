@@ -86,6 +86,9 @@ export const MISTAKES = [
   'ran out of time'
 ] as const
 
+/** One pen stroke; points are fractions (0–1) of the image's width and height. */
+export type Stroke = { x: number; y: number }[]
+
 export interface PoseResult {
   imageId: string
   /** Kept on the record so history still works after a board is removed. */
@@ -94,7 +97,14 @@ export interface PoseResult {
   spentMs: number
   skipped: boolean
   capturePath?: string
-  /** Red correction marks drawn over the capture (memory mode). */
+  /** Photos of this one drawing (paper), attached during review. */
+  photos?: string[]
+  /**
+   * Red correction marks, per drawing image (keyed by its path). Points are
+   * 0–1 across the image, so they stay put at any size and can still be undone.
+   */
+  marks?: Record<string, Stroke[]>
+  /** v0.1 memory mode saved marks as a picture; still shown for old sessions. */
   markupPath?: string
   mistakes: string[]
   note?: string
@@ -116,7 +126,7 @@ export interface SessionRecord {
   /** True when the session reached its last pose instead of being stopped early. */
   finished: boolean
   reviewed: boolean
-  /** Phone photos of paper pages, attached during review. */
+  /** Photos of whole paper pages (several drawings each), attached during review. */
   pagePhotos: string[]
   challenge?: { challengeId: string; level: number }
   redoOf?: string

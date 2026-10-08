@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-
-/** Points are 0–1 across the image, so marks stay put at any size. */
-export type Stroke = { x: number; y: number }[]
+import type { Stroke } from '@shared/types'
 
 export const MARK_RED = '#ff3b30'
 
-function containRect(box: DOMRect, nw: number, nh: number) {
-  const scale = Math.min(box.width / nw, box.height / nh)
+type Rect = { left: number; top: number; width: number; height: number }
+
+function containRect(boxW: number, boxH: number, nw: number, nh: number): Rect {
+  const scale = Math.min(boxW / nw, boxH / nh)
   const width = nw * scale
   const height = nh * scale
-  return { left: (box.width - width) / 2, top: (box.height - height) / 2, width, height }
+  return { left: (boxW - width) / 2, top: (boxH - height) / 2, width, height }
 }
 
 function draw(ctx: CanvasRenderingContext2D, strokes: Stroke[], w: number, h: number) {
@@ -28,45 +28,68 @@ function draw(ctx: CanvasRenderingContext2D, strokes: Stroke[], w: number, h: nu
   }
 }
 
-/** Your drawing with a red pen on top for marking corrections. */
+/** Drop points that barely move and round the rest, so saved strokes stay small. */
+export function simplifyStroke(s: Stroke): Stroke {
+  const out: Stroke = []
+  for (const p of s) {
+    const q = { x: Math.round(p.x * 10000) / 10000, y: Math.round(p.y * 10000) / 10000 }
+    const last = out[out.length - 1]
+    if (!last || Math.hypot(q.x - last.x, q.y - last.y) >= 0.002) out.push(q)
+  }
+  const end = s[s.length - 1]
+  if (s.length > 1 && out.length && out[out.length - 1] !== end) out.push(end)
+  return out
+}
+
+/**
+ * An image with red pen marks on top. With `onChange` you draw; without it
+ * the marks are only shown and the pointer passes through (for panning).
+ * The layout uses untransformed sizes, so it also works inside a zoomed pane.
+ */
 export function MarkupImage({
   src,
-  strokes,
+  alt,
+  strokes = [],
   onChange,
   savedMarkup
 }: {
   src: string
-  strokes: Stroke[]
+  alt: string
+  strokes?: Stroke[]
   onChange?: (s: Stroke[]) => void
-  /** A markup PNG saved earlier, shown instead of live strokes. */
+  /** Marks saved as a picture by v0.1 (memory mode). */
   savedMarkup?: string
 }) {
   const box = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
-  const [rect, setRect] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+  const [rect, setRect] = useState<Rect | null>(null)
   const current = useRef<Stroke | null>(null)
 
   useEffect(() => {
-    if (!box.current || !natural) return
-    const update = () => setRect(containRect(box.current!.getBoundingClientRect(), natural.w, natural.h))
+    const el = box.current
+    if (!el || !natural) return
+    const update = () => setRect(containRect(el.clientWidth, el.clientHeight, natural.w, natural.h))
     update()
     const ro = new ResizeObserver(update)
-    ro.observe(box.current)
+    ro.observe(el)
     return () => ro.disconnect()
   }, [natural])
+
+  const showCanvas = strokes.length > 0 || !!onChange
 
   useEffect(() => {
     const c = canvas.current
     if (!c || !rect) return
-    const dpr = window.devicePixelRatio || 1
-    c.width = Math.round(rect.width * dpr)
-    c.height = Math.round(rect.height * dpr)
+    // Extra resolution so marks stay crisp when the pane is zoomed in.
+    const density = (window.devicePixelRatio || 1) * 2
+    c.width = Math.round(rect.width * density)
+    c.height = Math.round(rect.height * density)
     draw(c.getContext('2d')!, strokes, c.width, c.height)
-  }, [rect, strokes])
+  }, [rect, strokes, showCanvas])
 
   const point = (e: React.PointerEvent) => {
-    const r = canvas.current!.getBoundingClientRect()
+    const r = canvas.current!.getBoundingClientRect() // includes any zoom, which is what we want here
     return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }
   }
 
@@ -74,47 +97,36 @@ export function MarkupImage({
     <div ref={box} className="relative h-full w-full">
       <img
         src={src}
-        alt="Your drawing"
+        alt={alt}
         draggable={false}
         onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
         className="absolute inset-0 h-full w-full object-contain"
       />
-      {savedMarkup && !onChange && (
-        <img src={savedMarkup} alt="" draggable={false} className="absolute inset-0 h-full w-full object-contain" />
-      )}
-      {rect && onChange && (
+      {savedMarkup && <img src={savedMarkup} alt="" draggable={false} className="absolute inset-0 h-full w-full object-contain" />}
+      {rect && showCanvas && (
         <canvas
           ref={canvas}
-          className="absolute cursor-crosshair touch-none"
+          className={`absolute touch-none ${onChange ? 'cursor-crosshair' : 'pointer-events-none'}`}
           style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
           onPointerDown={(e) => {
-            if (e.button !== 0) return
+            if (!onChange || e.button !== 0) return
+            e.stopPropagation()
             ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
             current.current = [point(e)]
             onChange([...strokes, current.current])
           }}
           onPointerMove={(e) => {
-            if (!current.current) return
+            if (!onChange || !current.current) return
             current.current = [...current.current, point(e)]
             onChange([...strokes.slice(0, -1), current.current])
           }}
           onPointerUp={() => {
+            if (!onChange || !current.current) return
+            onChange([...strokes.slice(0, -1), simplifyStroke(current.current)])
             current.current = null
           }}
         />
       )}
     </div>
   )
-}
-
-/** Render strokes at the drawing's real size as a transparent PNG. */
-export async function renderMarkup(strokes: Stroke[], src: string): Promise<Uint8Array | null> {
-  if (!strokes.length) return null
-  const img = new Image()
-  img.src = src
-  await img.decode()
-  const c = new OffscreenCanvas(img.naturalWidth, img.naturalHeight)
-  draw(c.getContext('2d') as unknown as CanvasRenderingContext2D, strokes, c.width, c.height)
-  const blob = await c.convertToBlob({ type: 'image/png' })
-  return new Uint8Array(await blob.arrayBuffer())
 }

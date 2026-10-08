@@ -44,8 +44,6 @@ export interface Api {
   pickRegion(): Promise<Region | null>
   capture(region: Region, sessionId: string, index: number): Promise<string | null>
   setCaptureProtection(on: boolean): Promise<void>
-  /** Save red correction marks (a transparent PNG) next to a session's captures. */
-  saveMarkup(sessionId: string, name: string, png: Uint8Array): Promise<string>
 
   minimize(): void
   toggleMaximize(): void

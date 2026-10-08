@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, powerSaveBlocker, proto
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { FloatState, Hotkeys, Region, StoreName } from '@shared/types'
-import { captureRegion, pickRegion, saveMarkup } from './capture'
+import { captureRegion, pickRegion } from './capture'
 import { attachFloat, boundsBeforeFloat, setFloat, setHotkeys, setSessionActive } from './float'
 import {
   importBytes,
@@ -150,7 +150,6 @@ function registerIpc(): void {
   // Keeps the app's own window out of captures (Windows 10 2004+), so a
   // float window over the canvas doesn't end up in the drawing.
   handle('capture:protect', (on: boolean) => main?.setContentProtection(on))
-  handle('capture:saveMarkup', (sessionId: string, name: string, png: Uint8Array) => saveMarkup(sessionId, name, png))
 
   ipcMain.on('window:minimize', () => main?.minimize())
   ipcMain.on('window:toggleMaximize', () => (main?.isMaximized() ? main.unmaximize() : main?.maximize()))
