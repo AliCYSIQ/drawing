@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { thumbUrl } from '@shared/api'
-import { SUGGESTED_TAGS, type Board, type BoardKind, type Folder, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
+import { SUGGESTED_TAGS, type Board, type BoardKind, type Folder, type FolderInfo, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
 import { ArrowLeft, ArrowRight, Close, Folder as FolderIcon, Images, Link, Plus, Refresh, Star, Trash } from '../components/Icons'
+import { ImportSheet, type ImportOptions } from '../components/ImportSheet'
 import { TagEditor } from '../components/TagEditor'
 import { Button, Empty, IconButton } from '../components/ui'
 import {
@@ -60,6 +61,8 @@ function BoardList({ folderId }: { folderId?: string }) {
   const [pinterestOpen, setPinterestOpen] = useState(false)
   const [newFolder, setNewFolder] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [sheet, setSheet] = useState<FolderInfo | null>(null)
+  const updateSettings = useApp((s) => s.updateSettings)
 
   const folder = folders.find((f) => f.id === folderId)
   const path = folderPath(folders, folderId)
@@ -81,11 +84,75 @@ function BoardList({ folderId }: { folderId?: string }) {
   const addFolder = async () => {
     const dir = await window.api.pickFolder()
     if (!dir) return
-    const images = await window.api.scanFolder(dir)
-    if (!images.length) return notify('That folder has no images in it.')
-    const name = dir.split(/[\\/]/).filter(Boolean).pop() ?? 'Folder'
-    create({ name, kind: 'folder', source: dir, images, syncedAt: Date.now() })
-    notify(`Added ${images.length} images from ${name}.`)
+    const info = await window.api.inspectFolder(dir)
+    if (!info.direct && !info.subfolders.length) return notify('That folder has no images in it.')
+    if (!info.subfolders.length) return importFolder(info, { choice: 'one', subfolders: [], copy: false, remember: false })
+    const remembered = useApp.getState().settings.folderImport
+    if (remembered !== 'ask') {
+      return importFolder(info, { choice: remembered, subfolders: info.subfolders.map((x) => x.path), copy: false, remember: false })
+    }
+    setSheet(info)
+  }
+
+  /** Add a folder the way the import sheet (or the remembered choice) says. */
+  const importFolder = async (info: FolderInfo, o: ImportOptions) => {
+    setSheet(null)
+    if (o.remember) updateSettings({ folderImport: o.choice })
+    const now = Date.now()
+    const allSubs = o.subfolders.length === info.subfolders.length
+
+    // One collection; linked to the folder unless only some sub-folders were picked.
+    const collection = async (name: string, dir: string, recursive: boolean, folder?: string, refs?: ImageRef[]) => {
+      let images = refs ?? (await window.api.scanFolder(dir, recursive))
+      if (!images.length) return null
+      const id = uid()
+      if (o.copy) images = await window.api.copyImages(id, images, dir)
+      const board: Board = {
+        id,
+        name,
+        kind: o.copy ? 'collection' : refs ? 'files' : 'folder',
+        tags: [],
+        folderId: folder,
+        source: dir,
+        ...(recursive ? {} : { recursive: false }),
+        images,
+        createdAt: now,
+        syncedAt: now
+      }
+      return board
+    }
+
+    let made: Board[] = []
+    if (o.choice === 'top') {
+      made = [await collection(info.name, info.path, false, folderId)].filter((b): b is Board => !!b)
+    } else if (o.choice === 'one') {
+      if (allSubs) {
+        made = [await collection(info.name, info.path, true, folderId)].filter((b): b is Board => !!b)
+      } else {
+        const refs = [
+          ...(await window.api.scanFolder(info.path, false)),
+          ...(await Promise.all(o.subfolders.map((p) => window.api.scanFolder(p)))).flat()
+        ]
+        made = [await collection(info.name, info.path, true, folderId, refs)].filter((b): b is Board => !!b)
+      }
+    } else {
+      const group: Folder = { id: uid(), name: info.name, parentId: folderId, shortcuts: [], createdAt: now }
+      setLibrary((l) => ({ ...l, folders: [...l.folders, group] }))
+      const subs = info.subfolders.filter((x) => o.subfolders.includes(x.path))
+      const parts = await Promise.all([
+        info.direct ? collection(`${info.name} (loose images)`, info.path, false, group.id) : null,
+        ...subs.map((x) => collection(x.name, x.path, true, group.id))
+      ])
+      made = parts.filter((b): b is Board => !!b)
+    }
+    if (!made.length) return notify('Nothing to add: the chosen folders have no images.')
+    setBoards((list) => [...list, ...made])
+    const images = made.reduce((a, b) => a + b.images.length, 0)
+    notify(
+      made.length === 1
+        ? `Added ${images} images from ${info.name}.`
+        : `Added ${made.length} collections (${images} images) in the folder “${info.name}”.`
+    )
   }
 
   const addImages = async () => {
@@ -225,6 +292,7 @@ function BoardList({ folderId }: { folderId?: string }) {
       )}
 
       {pinterestOpen && <PinterestForm folderId={folderId} onClose={() => setPinterestOpen(false)} />}
+      {sheet && <ImportSheet info={sheet} onCancel={() => setSheet(null)} onImport={(o) => void importFolder(sheet, o)} />}
 
       {boards.length > 0 && (
         <div className="mb-5 flex flex-wrap items-center gap-1.5">
@@ -586,7 +654,7 @@ function BoardDetail({ board }: { board: Board }) {
     setBusy(true)
     try {
       if (board.kind === 'folder' && board.source) {
-        const images = await window.api.scanFolder(board.source)
+        const images = await window.api.scanFolder(board.source, board.recursive !== false)
         updateBoard(board.id, { images, syncedAt: Date.now() })
         notify(`${images.length} images in the folder.`)
       } else if (board.kind === 'pinterest' && board.source) {
@@ -653,6 +721,18 @@ function BoardDetail({ board }: { board: Board }) {
     setLibrary((l) => ({ ...l, folders: dropShortcuts(l.folders, board.id) }))
     if (board.kind === 'pinterest' || board.kind === 'collection') void window.api.removeBoardFiles(board.id)
     go({ name: 'library', folderId: board.folderId })
+  }
+
+  /** Turn a linked collection into one the app keeps its own copy of. */
+  const keepCopy = async () => {
+    setBusy(true)
+    try {
+      const images = await window.api.copyImages(board.id, board.images, board.kind === 'folder' ? board.source : undefined)
+      updateBoard(board.id, { kind: 'collection', images })
+      notify(`Copied ${images.length} images into the app. Moving or deleting the originals won't affect this collection now.`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const home = folders.find((f) => f.id === board.folderId)
@@ -726,6 +806,11 @@ function BoardDetail({ board }: { board: Board }) {
             <Refresh size={16} /> {busy ? (progress ? progressText(progress) : 'Syncing…') : board.kind === 'folder' ? 'Rescan folder' : 'Sync again'}
           </Button>
         )}
+        {(board.kind === 'folder' || board.kind === 'files') && (
+          <Button tone="ghost" onClick={keepCopy} disabled={busy} title="Copy the images into the app, so moving or deleting the originals doesn't matter">
+            Copy into the app
+          </Button>
+        )}
         {(board.kind === 'files' || board.kind === 'collection') && (
           <Button onClick={addFiles}>
             <Images size={16} /> Add images
@@ -750,7 +835,8 @@ function BoardDetail({ board }: { board: Board }) {
         {board.images.length} images
         {board.source ? `, from ${board.source}` : ''}
         {board.kind === 'pinterest' && ' (saved on this computer)'}
-        {board.kind === 'folder' && '. Your files stay where they are; deleting the board does not delete them.'}
+        {board.kind === 'folder' && `${board.recursive === false ? ' (not its sub-folders)' : ''}. Linked: your files stay where they are, and deleting the collection does not delete them.`}
+        {board.kind === 'collection' && board.source && ' (copied into the app)'}
       </p>
       <div className="pb-3">
         <TagEditor tags={board.tags} onChange={(tags) => updateBoard(board.id, { tags })} suggestions={allTags} />

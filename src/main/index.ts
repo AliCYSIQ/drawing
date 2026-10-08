@@ -1,13 +1,15 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, powerSaveBlocker, protocol, shell } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { FloatState, Hotkeys, Region, StoreName } from '@shared/types'
+import type { FloatState, Hotkeys, ImageRef, Region, StoreName } from '@shared/types'
 import { captureRegion, pickRegion } from './capture'
 import { attachFloat, boundsBeforeFloat, setFloat, setHotkeys, setSessionActive } from './float'
 import {
+  copyImages,
   importBytes,
   importPinterest,
   importUrl,
+  inspectFolder,
   isImagePath,
   keepPhoto,
   refsForFiles,
@@ -123,7 +125,9 @@ function registerIpc(): void {
     return r.canceled ? [] : r.filePaths
   })
   handle('library:keepPhoto', (sessionId: string, path: string) => keepPhoto(sessionId, path))
-  handle('library:scanFolder', (dir: string) => scanFolder(dir))
+  handle('library:scanFolder', (dir: string, recursive?: boolean) => scanFolder(dir, recursive !== false))
+  handle('library:inspectFolder', (dir: string) => inspectFolder(dir))
+  handle('library:copyImages', (boardId: string, refs: ImageRef[], baseDir?: string) => copyImages(boardId, refs, baseDir))
   handle('library:refsForFiles', (paths: string[]) => refsForFiles(paths))
   handle('library:importUrl', (boardId: string, url: string) => importUrl(boardId, url))
   handle('library:importBytes', (boardId: string, name: string, bytes: Uint8Array) => importBytes(boardId, name, bytes))

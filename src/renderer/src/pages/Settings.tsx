@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { DEFAULT_HOTKEYS, type HotkeyAction, type Settings as SettingsT } from '@shared/types'
+import { DEFAULT_HOTKEYS, type FolderImport, type HotkeyAction, type Settings as SettingsT } from '@shared/types'
 import { Button, Field, PageHeader, Segmented, Toggle } from '../components/ui'
 import { useApp } from '../store'
 
@@ -83,6 +83,20 @@ export function Settings() {
             />
             <span className="tnum w-12 text-ink">{Math.round(settings.uiScale * 100)}%</span>
           </div>
+        </Field>
+
+        <Field label="Adding folders" hint="What happens when a folder you add has sub-folders with images.">
+          <select
+            aria-label="When a folder has sub-folders"
+            value={settings.folderImport}
+            onChange={(e) => updateSettings({ folderImport: e.target.value as FolderImport })}
+            className="h-9 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
+          >
+            <option value="ask">Ask each time</option>
+            <option value="one">One collection with everything</option>
+            <option value="split">A collection for each sub-folder</option>
+            <option value="top">Only the images directly in the folder</option>
+          </select>
         </Field>
 
         <Field label="Sound">

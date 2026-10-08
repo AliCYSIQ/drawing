@@ -30,9 +30,21 @@ export interface Board {
   favorite?: boolean
   /** Folder path or Pinterest URL. */
   source?: string
+  /** Linked folders: false = only the images directly in the folder, not its sub-folders. */
+  recursive?: boolean
   images: ImageRef[]
   createdAt: number
   syncedAt?: number
+}
+
+/** What a folder on disk holds, before adding it. */
+export interface FolderInfo {
+  name: string
+  path: string
+  /** Images directly in the folder (not in its sub-folders). */
+  direct: number
+  /** Sub-folders that contain images, with their image count (including deeper folders). */
+  subfolders: { name: string; path: string; count: number }[]
 }
 
 /** A folder in the library. Holds folders and collections; other folders can show a collection as a shortcut. */
