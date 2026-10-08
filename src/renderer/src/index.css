@@ -123,14 +123,22 @@ textarea {
   }
 }
 
-/* Controls that appear when the pointer is over the stage. */
+/*
+  Stage controls. data-controls on the stage says how they appear:
+  hover (normal window), on / off (float mode: shown after a click).
+*/
 .reveal {
   opacity: 0;
   transition: opacity 160ms;
 }
-.stage:hover .reveal,
-.reveal:focus-within {
+.stage[data-controls='hover']:hover .reveal,
+.stage[data-controls='hover'] .reveal:focus-within,
+.stage[data-controls='on'] .reveal {
   opacity: 1;
+}
+/* Hidden float controls can't be clicked by accident. */
+.stage[data-controls='off'] .reveal {
+  pointer-events: none;
 }
 
 /* A pencil line: slightly uneven, like a stroke on paper. */
