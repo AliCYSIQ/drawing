@@ -130,11 +130,34 @@ function BoardList() {
   )
 }
 
-/** One large image and two small ones, like a board cover. */
+/** A board cover that fits what the board holds: empty, one image, two side by side, or one large and two small. */
 function Mosaic({ images }: { images: ImageRef[] }) {
   const [a, b, c] = images
+  const frame = 'aspect-[4/3] overflow-hidden rounded-md bg-surface ring-1 ring-line'
+  if (!a) {
+    return (
+      <div className={`${frame} flex items-center justify-center text-muted`}>
+        <Images size={28} />
+      </div>
+    )
+  }
+  if (!b) {
+    return (
+      <div className={frame}>
+        <Cover img={a} size={480} />
+      </div>
+    )
+  }
+  if (!c) {
+    return (
+      <div className={`${frame} grid grid-cols-2 gap-0.5`}>
+        <Cover img={a} />
+        <Cover img={b} />
+      </div>
+    )
+  }
   return (
-    <div className="grid aspect-[4/3] grid-cols-[2fr_1fr] grid-rows-2 gap-0.5 overflow-hidden rounded-md bg-surface ring-1 ring-line">
+    <div className={`${frame} grid grid-cols-[2fr_1fr] grid-rows-2 gap-0.5`}>
       <Cover img={a} className="row-span-2" size={480} />
       <Cover img={b} />
       <Cover img={c} />
@@ -142,11 +165,10 @@ function Mosaic({ images }: { images: ImageRef[] }) {
   )
 }
 
-function Cover({ img, className = '', size = 240 }: { img?: ImageRef; className?: string; size?: number }) {
-  return img ? (
-    <img src={thumbUrl(img.path, size)} alt="" loading="lazy" className={`h-full w-full object-cover ${className}`} />
-  ) : (
-    <div className={`bg-raised ${className}`} />
+function Cover({ img, className = '', size = 240 }: { img: ImageRef; className?: string; size?: number }) {
+  // Most references are portrait figures: crop from the upper part so heads stay in the cover.
+  return (
+    <img src={thumbUrl(img.path, size)} alt="" loading="lazy" className={`h-full w-full object-cover object-[center_20%] ${className}`} />
   )
 }
 
