@@ -7,3 +7,4 @@ playwright-report
 *.log
 .DS_Store
 *.tsbuildinfo
+e2e/adhoc*.spec.ts
