@@ -4,10 +4,12 @@ import {
   DEFAULT_HOTKEYS,
   DEFAULT_PLAN,
   DEFAULT_SETTINGS,
+  EMPTY_LIBRARY,
   type Board,
   type Challenge,
   type FloatState,
   type HotkeyAction,
+  type LibraryMeta,
   type PoseResult,
   type Preset,
   type SessionPlan,
@@ -21,7 +23,7 @@ import { activeMs, createEngine, type EngineState, type Slot } from './lib/sessi
 
 export type View =
   | { name: 'practice' }
-  | { name: 'library'; boardId?: string }
+  | { name: 'library'; boardId?: string; folderId?: string }
   | { name: 'viewer'; boardId: string; index: number }
   | { name: 'challenges'; challengeId?: string }
   | { name: 'stats' }
@@ -54,6 +56,8 @@ interface State {
   loaded: boolean
   view: View
   boards: Board[]
+  /** Folders and favorite images. */
+  library: LibraryMeta
   sessions: SessionRecord[]
   challenges: Challenge[]
   presets: Preset[]
@@ -67,6 +71,7 @@ interface State {
   go(view: View): void
   notify(text: string): void
   setBoards(fn: (b: Board[]) => Board[]): void
+  setLibrary(fn: (l: LibraryMeta) => LibraryMeta): void
   updateBoard(id: string, patch: Partial<Board>): void
   setChallenges(fn: (c: Challenge[]) => Challenge[]): void
   setPresets(fn: (p: Preset[]) => Preset[]): void
@@ -100,6 +105,7 @@ export const useApp = create<State>((set, get) => ({
   loaded: false,
   view: { name: 'practice' },
   boards: [],
+  library: EMPTY_LIBRARY,
   sessions: [],
   challenges: [],
   presets: [],
@@ -113,8 +119,9 @@ export const useApp = create<State>((set, get) => ({
     if (initStarted) return
     initStarted = true
     const api = window.api
-    const [boards, sessions, challenges, presets, saved] = await Promise.all([
+    const [boards, library, sessions, challenges, presets, saved] = await Promise.all([
       api.load<Board[]>('boards'),
+      api.load<LibraryMeta>('library'),
       api.load<SessionRecord[]>('sessions'),
       api.load<Challenge[]>('challenges'),
       api.load<Preset[]>('presets'),
@@ -130,7 +137,8 @@ export const useApp = create<State>((set, get) => ({
       float: { ...DEFAULT_FLOAT, ...saved?.float, on: false, clickThrough: false }
     }
     set({
-      boards: boards ?? [],
+      boards: (boards ?? []).map((b) => ({ ...b, tags: b.tags ?? [] })),
+      library: { ...EMPTY_LIBRARY, ...library },
       sessions: sessions ?? [],
       challenges: challenges ?? [],
       presets: presets ?? [],
@@ -165,6 +173,10 @@ export const useApp = create<State>((set, get) => ({
 
   setBoards(fn) {
     set({ boards: fn(get().boards) })
+  },
+
+  setLibrary(fn) {
+    set({ library: fn(get().library) })
   },
 
   updateBoard(id, patch) {
@@ -333,6 +345,7 @@ function persist(name: StoreName, data: unknown): void {
 useApp.subscribe((state, prev) => {
   if (!state.loaded || !prev.loaded) return
   if (state.boards !== prev.boards) persist('boards', state.boards)
+  if (state.library !== prev.library) persist('library', state.library)
   if (state.sessions !== prev.sessions) persist('sessions', state.sessions)
   if (state.challenges !== prev.challenges) persist('challenges', state.challenges)
   if (state.presets !== prev.presets) persist('presets', state.presets)

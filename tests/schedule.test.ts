@@ -21,8 +21,8 @@ function seeded(seed = 1) {
 
 describe('schedule', () => {
   it('merges boards without duplicate images', () => {
-    const a: Board = { id: 'a', name: 'A', kind: 'folder', category: 'figures', images: imgs(3), createdAt: 0 }
-    const b: Board = { id: 'b', name: 'B', kind: 'folder', category: 'figures', images: imgs(2), createdAt: 0 }
+    const a: Board = { id: 'a', name: 'A', kind: 'folder', tags: [], images: imgs(3), createdAt: 0 }
+    const b: Board = { id: 'b', name: 'B', kind: 'folder', tags: [], images: imgs(2), createdAt: 0 }
     expect(poolFromBoards([a, b], ['a', 'b'])).toHaveLength(3)
   })
 
