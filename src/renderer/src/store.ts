@@ -306,6 +306,17 @@ export const useApp = create<State>((set, get) => ({
   }
 }))
 
+/** Pages that can show in float mode; every other page needs the normal window. */
+const FLOAT_VIEWS: View['name'][] = ['session', 'viewer']
+
+// Leaving a float page (Esc, end of session, navigation) turns float mode off,
+// which also clears click-through, lock and opacity on the window.
+useApp.subscribe((state, prev) => {
+  if (state.view !== prev.view && state.float.on && !FLOAT_VIEWS.includes(state.view.name)) {
+    state.setFloat({ on: false, clickThrough: false })
+  }
+})
+
 // Save each collection shortly after it changes.
 const timers = new Map<StoreName, ReturnType<typeof setTimeout>>()
 function persist(name: StoreName, data: unknown): void {

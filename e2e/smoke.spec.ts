@@ -90,15 +90,49 @@ test('canvas capture saves the picked screen area at full resolution', async () 
   expect(size.height).toBe(Math.round(200 * display.scale))
 })
 
-test('float mode turns on and off', async () => {
+const windowState = () =>
+  app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows()[0]
+    return { onTop: w.isAlwaysOnTop(), opacity: w.getOpacity(), movable: w.isMovable(), resizable: w.isResizable() }
+  })
+
+const stage = () => page.locator('.stage')
+
+test('float mode: controls show on click, not hover, and it turns off', async () => {
   await page.getByRole('button', { name: 'Done' }).click()
   await page.getByRole('button', { name: 'Library' }).click()
   await page.getByRole('button', { name: /pose|Folder/ }).first().click()
   await page.getByRole('button', { name: 'Open image 1' }).click()
   await page.getByRole('button', { name: 'Float on top' }).click()
-  const onTop = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isAlwaysOnTop())
-  expect(onTop).toBe(true)
+  expect((await windowState()).onTop).toBe(true)
+
+  // Hovering shows nothing in float mode; a click does.
+  await page.mouse.move(150, 200)
+  await expect(stage()).toHaveAttribute('data-controls', 'off')
+  await page.mouse.click(150, 200)
+  await expect(stage()).toHaveAttribute('data-controls', 'on')
+
   await page.getByRole('button', { name: 'Leave float mode' }).first().click()
-  const after = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isAlwaysOnTop())
-  expect(after).toBe(false)
+  expect((await windowState()).onTop).toBe(false)
+})
+
+test('ending a session from float mode with click-through leaves a normal window', async () => {
+  await page.keyboard.press('Escape') // leave the image viewer
+  await page.getByRole('button', { name: 'Practice' }).click()
+  await page.getByRole('radio', { name: 'Classic' }).click()
+  await page.getByRole('spinbutton', { name: 'Custom seconds' }).fill('30')
+  await page.getByRole('spinbutton', { name: 'Number of poses' }).fill('2')
+  await page.getByRole('button', { name: 'Start drawing' }).click()
+  await page.getByRole('button', { name: 'Float on top' }).click()
+  await page.mouse.click(150, 200)
+  await page.getByRole('button', { name: /^Click-through/ }).click()
+  await page.getByRole('button', { name: 'Keep on top' }).waitFor({ state: 'attached' })
+  await expect(stage()).toHaveAttribute('data-controls', 'off')
+  expect(await windowState()).toMatchObject({ onTop: true, movable: false })
+
+  await page.waitForTimeout(3500)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible()
+  expect(await windowState()).toEqual({ onTop: false, opacity: 1, movable: true, resizable: true })
+  await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible()
 })

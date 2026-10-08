@@ -1,13 +1,22 @@
-import { useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { imageUrl } from '@shared/api'
 import { useApp } from '../store'
 import { Close, Lock, Pin, Through } from './Icons'
 import { IconButton } from './ui'
 
+const HIDE_AFTER_MS = 4000
+/** A press that moves less than this is a click, not a drag. */
+const CLICK_SLOP = 4
+
 /**
- * The area that shows a reference. In float mode the whole stage drags the
- * window (by hand, so hover still works for the controls) and a small
- * toolbar with the float options appears on hover.
+ * The area that shows a reference.
+ *
+ * Normal window: the controls appear on hover.
+ * Float mode: hovering never shows anything, because it got in the way while
+ * drawing next to the window. A click shows the controls; they hide again
+ * after a few idle seconds, when the mouse leaves, or on the next click.
+ * With click-through on they never show (the hotkeys still work).
+ * Dragging the stage moves the window (by hand, so hover still works).
  */
 export function Stage({
   path,
@@ -26,30 +35,51 @@ export function Stage({
 }) {
   const float = useApp((s) => s.float)
   const setFloat = useApp((s) => s.setFloat)
-  const drag = useRef<{ x: number; y: number; wx: number; wy: number } | null>(null)
+  const press = useRef<{ x: number; y: number; wx: number; wy: number; moved: boolean } | null>(null)
+  const [shown, setShown] = useState(false)
+  const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+
+  const keepShown = () => {
+    clearTimeout(hideTimer.current)
+    hideTimer.current = setTimeout(() => setShown(false), HIDE_AFTER_MS)
+  }
+  useEffect(() => () => clearTimeout(hideTimer.current), [])
+  // Entering or leaving float mode starts with the controls hidden.
+  useEffect(() => setShown(false), [float.on])
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (!float.on || float.locked || e.button !== 0) return
+    if (!float.on || e.button !== 0) return
     if ((e.target as HTMLElement).closest('button, input, [data-no-drag]')) return
-    drag.current = { x: e.screenX, y: e.screenY, wx: window.screenX, wy: window.screenY }
+    press.current = { x: e.screenX, y: e.screenY, wx: window.screenX, wy: window.screenY, moved: false }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
   const onPointerMove = (e: React.PointerEvent) => {
-    const d = drag.current
-    if (!d) return
-    window.api.moveWindow(d.wx + e.screenX - d.x, d.wy + e.screenY - d.y)
+    if (shown) keepShown()
+    const p = press.current
+    if (!p) return
+    if (!p.moved && Math.hypot(e.screenX - p.x, e.screenY - p.y) < CLICK_SLOP) return
+    p.moved = true
+    if (!float.locked) window.api.moveWindow(p.wx + e.screenX - p.x, p.wy + e.screenY - p.y)
   }
-  const endDrag = () => {
-    drag.current = null
+  const onPointerUp = () => {
+    const p = press.current
+    press.current = null
+    if (!p || p.moved) return
+    setShown((v) => !v)
+    keepShown()
   }
+
+  const mode = !float.on ? 'hover' : shown && !float.clickThrough ? 'on' : 'off'
 
   return (
     <div
+      data-controls={mode}
       className={`stage relative h-full w-full overflow-hidden bg-bg ${float.on && !float.locked ? 'cursor-move' : ''}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      onPointerUp={onPointerUp}
+      onPointerCancel={() => (press.current = null)}
+      onPointerLeave={() => float.on && !press.current && setShown(false)}
       onDoubleClick={(e) => {
         if (float.on && !(e.target as HTMLElement).closest('button, input')) setFloat({ on: false })
       }}
