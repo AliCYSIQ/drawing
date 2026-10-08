@@ -1,13 +1,32 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionRecord } from '@shared/types'
-import { minutesByDay, yearGrid } from '../lib/stats'
+import { dayKey, minutesByDay, yearGrid } from '../lib/stats'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const CELL = 13
 const GAP = 3
+const WEEKS = 53
 
-export function Heatmap({ sessions, end = new Date() }: { sessions: SessionRecord[]; end?: Date }) {
-  const grid = useMemo(() => yearGrid(minutesByDay(sessions), end), [sessions, end])
+/** Square size that fills the available width, within readable limits. */
+function useCellSize(): [React.RefObject<HTMLDivElement | null>, number] {
+  const ref = useRef<HTMLDivElement>(null)
+  const [cell, setCell] = useState(13)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => setCell(Math.max(11, Math.min(22, Math.floor((el.clientWidth - 24) / WEEKS) - GAP)))
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, cell]
+}
+
+export function Heatmap({ sessions, end }: { sessions: SessionRecord[]; end?: Date }) {
+  const today = dayKey(end ?? new Date())
+  // Recomputed when sessions change or the day rolls over, not on every render.
+  const grid = useMemo(() => yearGrid(minutesByDay(sessions), end ?? new Date(), WEEKS), [sessions, today])
+  const [box, CELL] = useCellSize()
   // Extra room on the right so the last month label isn't cut off.
   const width = grid.length * (CELL + GAP) + 24
   const height = 7 * (CELL + GAP) + 18
@@ -22,7 +41,7 @@ export function Heatmap({ sessions, end = new Date() }: { sessions: SessionRecor
   })
 
   return (
-    <div className="overflow-x-auto">
+    <div ref={box} className="overflow-x-auto">
       <svg width={width} height={height} role="img" aria-label="Practice minutes per day for the last year">
         {labels.map((l) => (
           <text key={l.x} x={l.x} y={11} fontSize={11} fill="var(--muted)">

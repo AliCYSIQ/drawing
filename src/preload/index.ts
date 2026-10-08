@@ -28,6 +28,7 @@ const api: Api = {
   onFloatChanged: (cb) => on('float:changed', cb),
   setHotkeys: (hotkeys) => ipcRenderer.invoke('hotkeys:set', hotkeys),
   setSessionActive: (active) => ipcRenderer.invoke('session:active', active),
+  setZoom: (factor) => ipcRenderer.invoke('window:zoom', factor),
   onHotkey: (cb) => on('hotkey', cb),
 
   pickRegion: () => ipcRenderer.invoke('capture:pickRegion'),

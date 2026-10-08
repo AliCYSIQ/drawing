@@ -175,6 +175,8 @@ export type HotkeyAction = keyof Hotkeys
 
 export interface Settings {
   theme: 'dark' | 'light' | 'system'
+  /** Interface size: 1 = 100%. Ctrl + / - / 0 change it. */
+  uiScale: number
   sound: boolean
   hotkeys: Hotkeys
   captureRegion?: Region
@@ -199,6 +201,7 @@ export const DEFAULT_FLOAT: FloatState = {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
+  uiScale: 1,
   sound: true,
   hotkeys: DEFAULT_HOTKEYS,
   float: DEFAULT_FLOAT

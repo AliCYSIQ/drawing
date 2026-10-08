@@ -44,7 +44,7 @@ export function Stats() {
   }
 
   return (
-    <div className="mx-auto max-w-[1180px] px-8 py-8">
+    <div className="page-form">
       <PageHeader title="Stats" />
       <section aria-label="Practice heatmap" className="rounded-lg bg-surface p-5 ring-1 ring-line">
         <Heatmap sessions={sessions} />

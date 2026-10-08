@@ -1,9 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, powerSaveBlocker, protocol, shell } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { FloatState, Hotkeys, Region, StoreName } from '@shared/types'
 import { captureRegion, pickRegion, saveMarkup } from './capture'
-import { attachFloat, setFloat, setHotkeys, setSessionActive } from './float'
+import { attachFloat, boundsBeforeFloat, setFloat, setHotkeys, setSessionActive } from './float'
 import {
   importBytes,
   importPinterest,
@@ -16,6 +16,7 @@ import {
   thumbnail
 } from './library'
 import { dataDir, exportZip, load, save } from './store'
+import { loadWindowState, trackWindowState } from './windowState'
 
 // Tests point the app at a throwaway data folder.
 if (process.env.DRAWING_DATA_DIR) app.setPath('userData', process.env.DRAWING_DATA_DIR)
@@ -36,9 +37,9 @@ function loadRenderer(w: BrowserWindow, hash = ''): void {
 }
 
 function createWindow(): void {
+  const saved = loadWindowState()
   main = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    ...(saved?.bounds ?? { width: 1280, height: 820 }),
     frame: false,
     show: false,
     backgroundColor: '#141413',
@@ -46,7 +47,11 @@ function createWindow(): void {
     webPreferences: { preload }
   })
   attachFloat(main)
-  main.once('ready-to-show', () => main?.show())
+  trackWindowState(main, boundsBeforeFloat)
+  main.once('ready-to-show', () => {
+    if (saved?.maximized) main?.maximize()
+    main?.show()
+  })
   main.on('maximize', () => main?.webContents.send('window:maximized', true))
   main.on('unmaximize', () => main?.webContents.send('window:maximized', false))
   // Links open in the real browser, never inside the app.
@@ -77,6 +82,16 @@ function registerProtocol(): void {
       return new Response('Not found', { status: 404 })
     }
   })
+}
+
+// The screen must not dim or sleep in the middle of a pose.
+let awakeId: number | null = null
+function keepAwake(on: boolean): void {
+  if (on && awakeId === null) awakeId = powerSaveBlocker.start('prevent-display-sleep')
+  if (!on && awakeId !== null) {
+    powerSaveBlocker.stop(awakeId)
+    awakeId = null
+  }
 }
 
 function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>): void {
@@ -120,7 +135,13 @@ function registerIpc(): void {
 
   handle('float:set', (s: FloatState) => setFloat(s))
   handle('hotkeys:set', (h: Hotkeys) => setHotkeys(h))
-  handle('session:active', (active: boolean) => setSessionActive(active))
+  handle('session:active', (active: boolean) => {
+    setSessionActive(active)
+    keepAwake(active)
+  })
+  handle('window:zoom', (factor: number) => {
+    if (Number.isFinite(factor)) main?.webContents.setZoomFactor(Math.min(1.5, Math.max(0.8, factor)))
+  })
 
   handle('capture:pickRegion', () => pickRegion(main!, loadRenderer, preload))
   handle('capture:grab', (region: Region, sessionId: string, index: number) =>
@@ -165,6 +186,8 @@ if (!single) {
   })
   app.whenReady().then(() => {
     app.setAppUserModelId('com.ilent0.drawing-practice')
+    // No hidden default menu: its shortcuts (reload, zoom) would fight the app's own.
+    Menu.setApplicationMenu(null)
     registerProtocol()
     registerIpc()
     createWindow()

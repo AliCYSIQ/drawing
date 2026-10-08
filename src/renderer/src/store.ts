@@ -122,6 +122,9 @@ export const useApp = create<State>((set, get) => ({
     ])
     const settings: Settings = {
       ...DEFAULT_SETTINGS,
+      // First run on a large monitor (e.g. 2560 px at 100% Windows scaling):
+      // start a little bigger so text isn't tiny. Ctrl +/- changes it.
+      uiScale: window.screen.availWidth >= 2400 ? 1.2 : 1,
       ...saved,
       hotkeys: { ...DEFAULT_HOTKEYS, ...saved?.hotkeys },
       float: { ...DEFAULT_FLOAT, ...saved?.float, on: false, clickThrough: false }

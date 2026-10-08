@@ -19,8 +19,30 @@ export function App() {
   const toast = useApp((s) => s.toast)
   const run = useApp((s) => s.run)
 
+  const uiScale = useApp((s) => s.settings.uiScale)
+
   useEffect(() => {
     void useApp.getState().init()
+  }, [])
+
+  useEffect(() => {
+    if (loaded) void window.api.setZoom(uiScale)
+  }, [loaded, uiScale])
+
+  // Ctrl + / Ctrl - / Ctrl 0: interface size, like a browser.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey) return
+      const step = e.key === '=' || e.key === '+' ? 0.1 : e.key === '-' ? -0.1 : e.key === '0' ? 0 : null
+      if (step === null) return
+      e.preventDefault()
+      const { settings, updateSettings, notify } = useApp.getState()
+      const next = step === 0 ? 1 : Math.round(Math.min(1.5, Math.max(0.8, settings.uiScale + step)) * 10) / 10
+      updateSettings({ uiScale: next })
+      notify(`Interface size ${Math.round(next * 100)}%`)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useApp, type View } from '../store'
 import { Close, Gear, Maximize, Minimize } from './Icons'
 
@@ -8,6 +8,25 @@ const TABS: { name: View['name']; label: string }[] = [
   { name: 'challenges', label: 'Challenges' },
   { name: 'stats', label: 'Stats' }
 ]
+
+/** Hand-drawn underlines; each tab change picks a different one, like a new pencil stroke. */
+const STROKES = [
+  { d: 'M1 2.6C15 1.2 40 1.4 59 2.2', w: 2 },
+  { d: 'M1 2.2C18 2.9 38 1.3 59 2.4', w: 1.9 },
+  { d: 'M1 2.8C12 1.6 30 2.6 46 1.9S56 2.1 59 1.8', w: 2.1 },
+  { d: 'M1 1.9C20 2.5 42 2.8 59 1.7', w: 1.8 },
+  { d: 'M2 2.5C16 1.7 34 1.6 58 2.7', w: 2.2 }
+]
+
+function useStroke(current: string): { index: number; key: string } {
+  const last = useRef({ tab: '', index: 0 })
+  if (last.current.tab !== current) {
+    let index = Math.floor(Math.random() * (STROKES.length - 1))
+    if (index >= last.current.index) index++ // never the same stroke twice in a row
+    last.current = { tab: current, index }
+  }
+  return { index: last.current.index, key: `${current}-${last.current.index}` }
+}
 
 function activeTab(view: View): View['name'] {
   if (view.name === 'viewer') return 'library'
@@ -23,6 +42,7 @@ export function TitleBar() {
   useEffect(() => window.api.onMaximized(setMaximized), [])
 
   const current = activeTab(view)
+  const stroke = useStroke(current)
 
   return (
     <header
@@ -51,8 +71,22 @@ export function TitleBar() {
           >
             {t.label}
             {current === t.name && (
-              <svg className="pencil absolute inset-x-2 bottom-1.5" height="4" viewBox="0 0 60 4" preserveAspectRatio="none" aria-hidden="true">
-                <path d="M1 2.6C15 1.2 40 1.4 59 2.2" stroke="var(--blue)" strokeWidth="2" fill="none" />
+              <svg
+                key={stroke.key}
+                className="pencil absolute inset-x-2 bottom-1.5"
+                height="4"
+                viewBox="0 0 60 4"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <path
+                  className="pencil-draw"
+                  pathLength={1}
+                  d={STROKES[stroke.index].d}
+                  stroke="var(--blue)"
+                  strokeWidth={STROKES[stroke.index].w}
+                  fill="none"
+                />
               </svg>
             )}
           </button>

@@ -35,7 +35,10 @@ export interface Api {
   setFloat(state: FloatState): Promise<void>
   onFloatChanged(cb: (state: FloatState) => void): () => void
   setHotkeys(hotkeys: Hotkeys): Promise<Record<HotkeyAction, boolean>>
+  /** Also keeps the screen awake while a session runs. */
   setSessionActive(active: boolean): Promise<void>
+  /** Interface size, 0.8–1.5. */
+  setZoom(factor: number): Promise<void>
   onHotkey(cb: (action: 'pause' | 'next') => void): () => void
 
   pickRegion(): Promise<Region | null>

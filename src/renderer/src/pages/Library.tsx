@@ -64,7 +64,7 @@ function BoardList() {
   }
 
   return (
-    <div className="mx-auto max-w-[1180px] px-8 py-8">
+    <div className="page-wide">
       <PageHeader title="Library">
         <Button onClick={addFolder}>
           <Folder size={16} /> Add folder
@@ -106,7 +106,7 @@ function BoardList() {
           your browser.
         </Empty>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(clamp(240px,15vw,340px),1fr))] gap-5">
           {shown.map((b) => (
             <button
               key={b.id}
@@ -360,7 +360,7 @@ function BoardDetail({ board }: { board: Board }) {
 
   return (
     <div
-      className="mx-auto max-w-[1180px] px-8 py-8"
+      className="page-wide"
       onDragOver={(e) => {
         if (!canDrop) return
         e.preventDefault()
@@ -440,7 +440,7 @@ function BoardDetail({ board }: { board: Board }) {
       )}
 
       {board.images.length ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(clamp(150px,10vw,240px),1fr))] gap-2">
           {board.images.map((img, i) => (
             <div key={img.id} className="group relative">
               <button
