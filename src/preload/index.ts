@@ -13,7 +13,9 @@ const api: Api = {
 
   pickFolder: () => ipcRenderer.invoke('library:pickFolder'),
   pickImages: () => ipcRenderer.invoke('library:pickImages'),
-  scanFolder: (dir) => ipcRenderer.invoke('library:scanFolder', dir),
+  scanFolder: (dir, recursive) => ipcRenderer.invoke('library:scanFolder', dir, recursive),
+  inspectFolder: (dir) => ipcRenderer.invoke('library:inspectFolder', dir),
+  copyImages: (boardId, refs, baseDir) => ipcRenderer.invoke('library:copyImages', boardId, refs, baseDir),
   refsForFiles: (paths) => ipcRenderer.invoke('library:refsForFiles', paths),
   importUrl: (boardId, url) => ipcRenderer.invoke('library:importUrl', boardId, url),
   importBytes: (boardId, name, bytes) => ipcRenderer.invoke('library:importBytes', boardId, name, bytes),

@@ -1,5 +1,6 @@
 import type {
   FloatState,
+  FolderInfo,
   HotkeyAction,
   Hotkeys,
   ImageRef,
@@ -16,7 +17,11 @@ export interface Api {
 
   pickFolder(): Promise<string | null>
   pickImages(): Promise<string[]>
-  scanFolder(dir: string): Promise<ImageRef[]>
+  /** recursive (default true): include images in sub-folders. */
+  scanFolder(dir: string, recursive?: boolean): Promise<ImageRef[]>
+  inspectFolder(dir: string): Promise<FolderInfo>
+  /** Copy images into the app's folder for a collection; ids stay the same. */
+  copyImages(boardId: string, refs: ImageRef[], baseDir?: string): Promise<ImageRef[]>
   refsForFiles(paths: string[]): Promise<ImageRef[]>
   /** Download an image URL into a collection board's folder. */
   importUrl(boardId: string, url: string): Promise<ImageRef>

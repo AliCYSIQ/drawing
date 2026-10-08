@@ -1,10 +1,10 @@
 import { nativeImage, net } from 'electron'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { extname, join } from 'node:path'
+import { copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { dirname, extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { ImageRef, PinterestImport } from '@shared/types'
+import type { FolderInfo, ImageRef, PinterestImport } from '@shared/types'
 import { fetchBoard, PINTEREST_UA, type PinImage } from './pinterest'
 import { dataDir } from './store'
 
@@ -23,13 +23,55 @@ export function refFor(path: string, sourceUrl?: string): ImageRef {
   return sourceUrl ? { id: imageId(path), path, sourceUrl } : { id: imageId(path), path }
 }
 
-export async function scanFolder(dir: string): Promise<ImageRef[]> {
-  const entries = await readdir(dir, { recursive: true, withFileTypes: true })
+const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+
+/** Images in a folder; with `recursive` (the default) also in every folder inside it. */
+export async function scanFolder(dir: string, recursive = true): Promise<ImageRef[]> {
+  const entries = await readdir(dir, { recursive, withFileTypes: true })
   const paths = entries
     .filter((e) => e.isFile() && isImagePath(e.name))
     .map((e) => join(e.parentPath, e.name))
-  paths.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+  paths.sort(byName)
   return paths.map((p) => refFor(p))
+}
+
+/** What a folder holds, so the app can ask what to do with its sub-folders. */
+export async function inspectFolder(dir: string): Promise<FolderInfo> {
+  const entries = await readdir(dir, { withFileTypes: true })
+  const direct = entries.filter((e) => e.isFile() && isImagePath(e.name)).length
+  const subfolders: FolderInfo['subfolders'] = []
+  for (const e of entries.filter((x) => x.isDirectory()).sort((a, b) => byName(a.name, b.name))) {
+    const path = join(dir, e.name)
+    const count = (await scanFolder(path).catch(() => [])).length
+    if (count) subfolders.push({ name: e.name, path, count })
+  }
+  const name = dir.split(/[\\/]/).filter(Boolean).pop() ?? 'Folder'
+  return { name, path: dir, direct, subfolders }
+}
+
+/**
+ * Copy images into the app's own folder for a collection, so the collection
+ * keeps working if the originals are moved or deleted. Ids stay the same, so
+ * favorites and history still match. With `baseDir`, sub-folders are kept.
+ */
+export async function copyImages(boardId: string, refs: ImageRef[], baseDir?: string): Promise<ImageRef[]> {
+  const dir = collectionDir(boardId)
+  await mkdir(dir, { recursive: true })
+  const out: ImageRef[] = []
+  for (const ref of refs) {
+    const rel = baseDir && ref.path.toLowerCase().startsWith(baseDir.toLowerCase())
+      ? ref.path.slice(baseDir.length).replace(/^[\\/]+/, '')
+      : `${createHash('sha1').update(ref.path).digest('hex').slice(0, 16)}${extname(ref.path).toLowerCase()}`
+    const target = join(dir, rel)
+    try {
+      await mkdir(dirname(target), { recursive: true })
+      if (!existsSync(target)) await copyFile(ref.path, target)
+      out.push({ ...ref, path: target })
+    } catch {
+      // A file that vanished or can't be read is left out of the copy.
+    }
+  }
+  return out
 }
 
 export function refsForFiles(paths: string[]): ImageRef[] {
