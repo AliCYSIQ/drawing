@@ -1,35 +1,58 @@
-export const CATEGORIES = [
-  'figures',
-  'faces',
-  'hands',
-  'creatures',
-  'props',
-  'environments',
-  'other'
-] as const
-export type Category = (typeof CATEGORIES)[number]
+/**
+ * Version of the saved data's format. Raise it with a migration in
+ * src/main/migrate.ts whenever saved data changes shape.
+ * 1 = v0.1 (fixed categories). 2 = free tags, folders, favorites.
+ */
+export const SCHEMA_VERSION = 2
+
+/** Offered when typing a tag. Only suggestions: any tag can be added. */
+export const SUGGESTED_TAGS = ['figures', 'faces', 'hands', 'feet', 'animals', 'creatures', 'clothing', 'props', 'environments']
 
 export type BoardKind = 'folder' | 'files' | 'pinterest' | 'collection'
 
 export interface ImageRef {
-  /** Stable id derived from the local path. */
+  /** Stable id, derived from the path the image was first added from; kept when a folder is relinked. */
   id: string
   /** Absolute path on disk (Pinterest and collection images live in the app's data folder). */
   path: string
   sourceUrl?: string
 }
 
+/** A collection of references ("board"). */
 export interface Board {
   id: string
   name: string
   kind: BoardKind
-  category: Category
+  /** Free tags, e.g. "hands", "project A". */
+  tags: string[]
+  /** Home folder; none = top level of the library. */
+  folderId?: string
+  favorite?: boolean
   /** Folder path or Pinterest URL. */
   source?: string
   images: ImageRef[]
   createdAt: number
   syncedAt?: number
 }
+
+/** A folder in the library. Holds folders and collections; other folders can show a collection as a shortcut. */
+export interface Folder {
+  id: string
+  name: string
+  parentId?: string
+  /** Collections shown here as shortcuts (their home is another folder). */
+  shortcuts: string[]
+  createdAt: number
+}
+
+/** Library data that isn't a collection: folders and favorite images. */
+export interface LibraryMeta {
+  folders: Folder[]
+  /** Image ids marked as favorites, across all collections. */
+  favoriteImages: string[]
+}
+
+export const EMPTY_LIBRARY: LibraryMeta = { folders: [], favoriteImages: [] }
 
 /** `seconds: 0` means untimed (you press next yourself). */
 export interface Block {
@@ -183,8 +206,14 @@ export interface Hotkeys {
 
 export type HotkeyAction = keyof Hotkeys
 
+/** What to do with sub-folders when adding a folder. 'ask' shows the choice each time. */
+export type FolderImport = 'ask' | 'one' | 'split' | 'top'
+
 export interface Settings {
+  /** Format of the saved data; see SCHEMA_VERSION. */
+  schemaVersion: number
   theme: 'dark' | 'light' | 'system'
+  folderImport: FolderImport
   /** Interface size: 1 = 100%. Ctrl + / - / 0 change it. */
   uiScale: number
   sound: boolean
@@ -210,7 +239,9 @@ export const DEFAULT_FLOAT: FloatState = {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  schemaVersion: SCHEMA_VERSION,
   theme: 'dark',
+  folderImport: 'ask',
   uiScale: 1,
   sound: true,
   hotkeys: DEFAULT_HOTKEYS,
@@ -235,7 +266,7 @@ export const DEFAULT_PLAN: SessionPlan = {
   capture: false
 }
 
-export type StoreName = 'boards' | 'sessions' | 'challenges' | 'presets' | 'settings'
+export type StoreName = 'boards' | 'library' | 'sessions' | 'challenges' | 'presets' | 'settings'
 
 export interface PinterestImport {
   name: string

@@ -16,6 +16,7 @@ import {
   thumbnail
 } from './library'
 import { dataDir, exportZip, load, save } from './store'
+import { migrateDataDir } from './migrate'
 import { loadWindowState, trackWindowState } from './windowState'
 
 // Tests point the app at a throwaway data folder.
@@ -183,10 +184,27 @@ if (!single) {
     if (main.isMinimized()) main.restore()
     main.focus()
   })
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     app.setAppUserModelId('com.ilent0.drawing-practice')
     // No hidden default menu: its shortcuts (reload, zoom) would fight the app's own.
     Menu.setApplicationMenu(null)
+    const migration = await migrateDataDir(dataDir()).catch((err: Error) => ({ status: 'failed' as const, err }))
+    if (migration.status === 'newer' || migration.status === 'failed') {
+      const detail =
+        migration.status === 'newer'
+          ? 'Your practice data was saved by a newer version of Drawing Practice. Install the newer version to open it; nothing was changed.'
+          : `Your practice data could not be updated (${migration.err.message}). A backup is in the data folder; nothing else was changed.`
+      const choice = dialog.showMessageBoxSync({
+        type: 'warning',
+        title: 'Drawing Practice',
+        message: 'Drawing Practice can’t open your data',
+        detail,
+        buttons: ['Open data folder', 'Quit']
+      })
+      if (choice === 0) await shell.openPath(dataDir())
+      app.quit()
+      return
+    }
     registerProtocol()
     registerIpc()
     createWindow()

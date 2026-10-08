@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { thumbUrl } from '@shared/api'
-import { CATEGORIES, type Board, type BoardKind, type Category, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
+import { SUGGESTED_TAGS, type Board, type BoardKind, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
 import { ArrowLeft, Folder, Images, Link, Plus, Refresh, Trash } from '../components/Icons'
+import { TagEditor } from '../components/TagEditor'
 import { Button, Empty, PageHeader } from '../components/ui'
 import { uid, useApp } from '../store'
 
@@ -12,7 +13,12 @@ const KIND_LABEL: Record<BoardKind, string> = {
   collection: 'Collection'
 }
 
-const label = (c: Category) => c[0].toUpperCase() + c.slice(1)
+const label = (t: string) => t[0].toUpperCase() + t.slice(1)
+
+/** Every tag in use, plus the usual suggestions, for the tag field. */
+export function tagSuggestions(boards: Board[]): string[] {
+  return [...new Set([...boards.flatMap((b) => b.tags), ...SUGGESTED_TAGS])].sort()
+}
 
 function mergeImages(existing: ImageRef[], added: ImageRef[]): ImageRef[] {
   const seen = new Set(existing.map((i) => i.id))
@@ -29,14 +35,14 @@ function BoardList() {
   const setBoards = useApp((s) => s.setBoards)
   const go = useApp((s) => s.go)
   const notify = useApp((s) => s.notify)
-  const [filter, setFilter] = useState<Category | 'all'>('all')
+  const [filter, setFilter] = useState<string>('all')
   const [pinterestOpen, setPinterestOpen] = useState(false)
 
-  const shown = filter === 'all' ? boards : boards.filter((b) => b.category === filter)
-  const used = useMemo(() => new Set(boards.map((b) => b.category)), [boards])
+  const shown = filter === 'all' ? boards : boards.filter((b) => b.tags.includes(filter))
+  const used = useMemo(() => [...new Set(boards.flatMap((b) => b.tags))].sort(), [boards])
 
-  const create = (b: Omit<Board, 'id' | 'createdAt' | 'category'> & { category?: Category }) => {
-    const board: Board = { category: 'figures', ...b, id: uid(), createdAt: Date.now() }
+  const create = (b: Omit<Board, 'id' | 'createdAt' | 'tags'> & { tags?: string[] }) => {
+    const board: Board = { tags: [], ...b, id: uid(), createdAt: Date.now() }
     setBoards((list) => [...list, board])
     return board
   }
@@ -82,9 +88,9 @@ function BoardList() {
 
       {pinterestOpen && <PinterestForm onClose={() => setPinterestOpen(false)} />}
 
-      {boards.length > 0 && (
-        <div className="mb-5 flex flex-wrap gap-1.5" role="group" aria-label="Filter by category">
-          {(['all', ...CATEGORIES.filter((c) => used.has(c))] as const).map((c) => (
+      {used.length > 0 && (
+        <div className="mb-5 flex flex-wrap gap-1.5" role="group" aria-label="Filter by tag">
+          {['all', ...used].map((c) => (
             <button
               key={c}
               type="button"
@@ -120,7 +126,7 @@ function BoardList() {
                 <span className="tnum text-[12.5px] text-muted">{b.images.length}</span>
               </div>
               <div className="text-[12.5px] text-muted">
-                {KIND_LABEL[b.kind]}, {label(b.category).toLowerCase()}
+                {[KIND_LABEL[b.kind], ...b.tags].join(", ")}
               </div>
             </button>
           ))}
@@ -193,7 +199,7 @@ function PinterestForm({ onClose }: { onClose: () => void }) {
         id: boardId,
         name: result.name,
         kind: 'pinterest',
-        category: 'figures',
+        tags: [],
         source: url.trim(),
         images: result.images,
         createdAt: Date.now(),
@@ -273,6 +279,8 @@ function cleanError(err: unknown): string {
 }
 
 function BoardDetail({ board }: { board: Board }) {
+  const allBoards = useApp((s) => s.boards)
+  const allTags = useMemo(() => tagSuggestions(allBoards), [allBoards])
   const updateBoard = useApp((s) => s.updateBoard)
   const setBoards = useApp((s) => s.setBoards)
   const go = useApp((s) => s.go)
@@ -384,18 +392,6 @@ function BoardDetail({ board }: { board: Board }) {
           onChange={(e) => updateBoard(board.id, { name: e.target.value })}
           className="-ml-1 min-w-0 flex-1 rounded-md bg-transparent px-1 text-[22px] font-semibold tracking-[-0.01em] text-ink outline-none hover:bg-surface focus:bg-surface focus:ring-1 focus:ring-blue"
         />
-        <select
-          aria-label="Category"
-          value={board.category}
-          onChange={(e) => updateBoard(board.id, { category: e.target.value as Category })}
-          className="h-9 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
-        >
-          {CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {label(c)}
-            </option>
-          ))}
-        </select>
         {(board.kind === 'folder' || board.kind === 'pinterest') && (
           <Button onClick={resync} disabled={busy}>
             <Refresh size={16} /> {busy ? (progress ? progressText(progress) : 'Syncing…') : board.kind === 'folder' ? 'Rescan folder' : 'Sync again'}
@@ -421,12 +417,15 @@ function BoardDetail({ board }: { board: Board }) {
           </Button>
         )}
       </div>
-      <p className="pb-5 text-muted">
+      <p className="pb-3 text-muted">
         {board.images.length} images
         {board.source ? `, from ${board.source}` : ''}
         {board.kind === 'pinterest' && ' (saved on this computer)'}
         {board.kind === 'folder' && '. Your files stay where they are; deleting the board does not delete them.'}
       </p>
+      <div className="pb-5">
+        <TagEditor tags={board.tags} onChange={(tags) => updateBoard(board.id, { tags })} suggestions={allTags} />
+      </div>
 
       {canDrop && (
         <div
