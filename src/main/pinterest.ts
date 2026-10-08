@@ -25,8 +25,13 @@ export interface BoardPage {
 export interface BoardResult {
   name: string
   pins: PinImage[]
-  /** True when only the RSS feed worked, which holds just the latest pins. */
+  /**
+   * True when not every page could be read: Pinterest stopped answering
+   * part way, or only the RSS feed worked (it holds just the latest pins).
+   */
   partial: boolean
+  /** Pin count the board reports (0 when unknown). Video-only pins have no image, so a few less is normal. */
+  expected: number
 }
 
 const UA =
@@ -125,7 +130,8 @@ export function parseRss(xml: string): { name: string; pins: PinImage[] } {
   return { name, pins }
 }
 
-type Fetch = (url: string, init?: { headers?: Record<string, string> }) => Promise<{
+type FetchInit = { headers?: Record<string, string>; cache?: 'no-store' }
+type Fetch = (url: string, init?: FetchInit) => Promise<{
   ok: boolean
   status: number
   url: string
@@ -136,16 +142,29 @@ export interface FetchBoardOptions {
   fetch?: Fetch
   onProgress?: (found: number, total: number) => void
   maxPins?: number
+  /** Waits between retries; tests pass a no-op. */
+  sleep?: (ms: number) => Promise<void>
 }
+
+// Every sync must see the board as it is now. Without this a re-sync could
+// get the same old page back, from the app's own HTTP cache or from a
+// Pinterest edge cache, which showed up as "5 pins, re-sync still 5".
+const FRESH: Pick<FetchInit, 'cache'> = { cache: 'no-store' }
+const NO_CACHE_HEADERS = { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
+const RETRY_DELAYS = [600, 1800]
 
 export async function fetchBoard(input: string, opts: FetchBoardOptions = {}): Promise<BoardResult> {
   const doFetch: Fetch = opts.fetch ?? (globalThis.fetch as unknown as Fetch)
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const maxPins = opts.maxPins ?? 2000
   let { url, path } = normalizeBoardUrl(input)
 
-  const pageRes = await doFetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en' } })
+  const pageRes = await doFetch(`${url}?_=${Date.now()}`, {
+    ...FRESH,
+    headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en', ...NO_CACHE_HEADERS }
+  })
   if (!pageRes.ok) throw new Error(`Pinterest answered ${pageRes.status}. Is the board public?`)
-  if (!path) ({ url, path } = normalizeBoardUrl(pageRes.url)) // short pin.it link
+  if (!path) ({ url, path } = normalizeBoardUrl(pageRes.url.split('?')[0])) // short pin.it link
   const html = await pageRes.text()
 
   let page: BoardPage
@@ -153,7 +172,7 @@ export async function fetchBoard(input: string, opts: FetchBoardOptions = {}): P
     page = parseBoardPage(html)
   } catch (err) {
     const rss = await fetchRss(doFetch, path)
-    if (rss) return { ...rss, partial: true }
+    if (rss) return { ...rss, partial: true, expected: 0 }
     throw err
   }
 
@@ -169,22 +188,45 @@ export async function fetchBoard(input: string, opts: FetchBoardOptions = {}): P
   add(page.pins)
   opts.onProgress?.(pins.length, page.pinCount)
 
+  // One page of the feed: retried with backoff, then once more with the
+  // smallest set of options, before giving up.
+  const feedPage = async (bookmark: string) => {
+    const attempts: Record<string, unknown>[] = [
+      ...RETRY_DELAYS.map(() => page.options),
+      page.options,
+      { board_id: page.boardId, page_size: 25 }
+    ]
+    for (let i = 0; i < attempts.length; i++) {
+      if (i > 0) await sleep(RETRY_DELAYS[Math.min(i - 1, RETRY_DELAYS.length - 1)])
+      const data = JSON.stringify({ options: { ...attempts[i], bookmarks: [bookmark] }, context: {} })
+      const feedUrl =
+        `https://www.pinterest.com/resource/${page.resource}/get/` +
+        `?source_url=${encodeURIComponent(path)}&data=${encodeURIComponent(data)}`
+      try {
+        const res = await doFetch(feedUrl, { ...FRESH, headers: { ...feedHeaders(path), ...NO_CACHE_HEADERS } })
+        if (res.ok) return parseFeedResponse(JSON.parse(await res.text()))
+      } catch {
+        // network hiccup or a changed reply: try again
+      }
+    }
+    return null
+  }
+
+  let complete = true
   let bookmark = page.bookmark
-  while (bookmark && pins.length < maxPins) {
-    const data = JSON.stringify({ options: { ...page.options, bookmarks: [bookmark] }, context: {} })
-    const feedUrl =
-      `https://www.pinterest.com/resource/${page.resource}/get/` +
-      `?source_url=${encodeURIComponent(path)}&data=${encodeURIComponent(data)}`
-    const res = await doFetch(feedUrl, { headers: feedHeaders(path) })
-    if (!res.ok) break // keep what we have
-    const next = parseFeedResponse(JSON.parse(await res.text()))
-    const before = pins.length
+  const usedBookmarks = new Set<string>()
+  while (bookmark && pins.length < maxPins && !usedBookmarks.has(bookmark)) {
+    usedBookmarks.add(bookmark)
+    const next = await feedPage(bookmark)
+    if (!next) {
+      complete = false
+      break
+    }
     add(next.pins)
     opts.onProgress?.(pins.length, page.pinCount)
-    if (pins.length === before) break
     bookmark = next.bookmark
   }
-  return { name: page.name, pins, partial: false }
+  return { name: page.name, pins, partial: !complete, expected: page.pinCount }
 }
 
 /** The resource endpoint answers 403 unless it is told which page handler is asking. */
@@ -202,7 +244,10 @@ async function fetchRss(doFetch: Fetch, path: string): Promise<{ name: string; p
   const parts = path.split('/').filter(Boolean)
   if (parts.length < 2) return null
   try {
-    const res = await doFetch(`https://www.pinterest.com/${parts[0]}/${parts[1]}.rss`, { headers: { 'User-Agent': UA } })
+    const res = await doFetch(`https://www.pinterest.com/${parts[0]}/${parts[1]}.rss?_=${Date.now()}`, {
+      ...FRESH,
+      headers: { 'User-Agent': UA, ...NO_CACHE_HEADERS }
+    })
     if (!res.ok) return null
     const rss = parseRss(await res.text())
     return rss.pins.length ? rss : null

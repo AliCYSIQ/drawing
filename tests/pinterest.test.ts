@@ -20,18 +20,24 @@ const feedPage = (ids: string[], bookmark?: string) =>
     }
   })
 
-function fakeFetch(routes: (url: string) => { status?: number; body: string }) {
+function fakeFetch(routes: (url: string, call: number) => { status?: number; body: string }) {
   const calls: string[] = []
   const headers: Record<string, string>[] = []
-  const fn = async (url: string, init?: { headers?: Record<string, string> }) => {
+  const caches: (string | undefined)[] = []
+  const fn = async (url: string, init?: { headers?: Record<string, string>; cache?: string }) => {
     calls.push(url)
     headers.push(init?.headers ?? {})
-    const r = routes(url)
+    caches.push(init?.cache)
+    const r = routes(url, calls.length)
     const status = r.status ?? 200
     return { ok: status < 400, status, url, text: async () => r.body }
   }
-  return { fn, calls, headers }
+  return { fn, calls, headers, caches }
 }
+
+const noSleep = async () => {}
+const BOARD = 'https://www.pinterest.com/pinterest/girls-night-in/'
+const isPage = (url: string) => !url.includes('/resource/')
 
 describe('pinterest', () => {
   it('normalizes board links from any Pinterest domain', () => {
@@ -71,12 +77,13 @@ describe('pinterest', () => {
 
   it('pages through the whole board', async () => {
     const { fn, calls, headers } = fakeFetch((url) => {
-      if (!url.includes('/resource/')) return { body: fixture('pinterest-board.html') }
+      if (isPage(url)) return { body: fixture('pinterest-board.html') }
       if (url.includes('BOOKMARK-1')) return { body: feedPage(['a', 'b'], 'BOOKMARK-2') }
       return { body: feedPage(['c']) }
     })
-    const board = await fetchBoard('https://www.pinterest.com/pinterest/girls-night-in/', { fetch: fn })
+    const board = await fetchBoard(BOARD, { fetch: fn, sleep: noSleep })
     expect(board.partial).toBe(false)
+    expect(board.expected).toBe(67)
     expect(board.pins.map((p) => p.id)).toEqual([
       '424605071145776592',
       '424605071145776596',
@@ -91,9 +98,68 @@ describe('pinterest', () => {
     expect(headers[1]['X-Pinterest-PWS-Handler']).toBe('www/[username]/[slug].js')
   })
 
+  it('fetches fresh every time, so a re-sync never reuses an old page', async () => {
+    const { fn, calls, caches, headers } = fakeFetch((url) =>
+      isPage(url) ? { body: fixture('pinterest-board.html') } : { body: feedPage(['a']) }
+    )
+    await fetchBoard(BOARD, { fetch: fn, sleep: noSleep })
+    await new Promise((r) => setTimeout(r, 2))
+    await fetchBoard(BOARD, { fetch: fn, sleep: noSleep })
+    const pages = calls.filter(isPage)
+    expect(pages).toHaveLength(2)
+    expect(pages[0]).not.toBe(pages[1]) // cache-busting query differs
+    expect(caches.every((c) => c === 'no-store')).toBe(true)
+    expect(headers.every((h) => h['Cache-Control'] === 'no-cache')).toBe(true)
+  })
+
+  it('retries a page that fails, then carries on', async () => {
+    let failures = 0
+    const { fn } = fakeFetch((url) => {
+      if (isPage(url)) return { body: fixture('pinterest-board.html') }
+      if (failures < 2) {
+        failures++
+        return { status: 503, body: '' }
+      }
+      return { body: feedPage(['a', 'b']) }
+    })
+    const board = await fetchBoard(BOARD, { fetch: fn, sleep: noSleep })
+    expect(board.partial).toBe(false)
+    expect(board.pins).toHaveLength(5)
+  })
+
+  it('falls back to the smallest options when the full ones are refused', async () => {
+    const { fn } = fakeFetch((url) => {
+      if (isPage(url)) return { body: fixture('pinterest-board.html') }
+      const data = decodeURIComponent(url)
+      return data.includes('field_set_key') ? { status: 403, body: 'Invalid Resource Request' } : { body: feedPage(['a']) }
+    })
+    const board = await fetchBoard(BOARD, { fetch: fn, sleep: noSleep })
+    expect(board.partial).toBe(false)
+    expect(board.pins.map((p) => p.id)).toContain('a')
+  })
+
+  it('reports a partial sync when Pinterest stops answering', async () => {
+    const { fn } = fakeFetch((url) =>
+      isPage(url) ? { body: fixture('pinterest-board.html') } : { status: 500, body: '' }
+    )
+    const board = await fetchBoard(BOARD, { fetch: fn, sleep: noSleep })
+    expect(board.partial).toBe(true)
+    expect(board.pins).toHaveLength(3)
+    expect(board.expected).toBe(67)
+  })
+
+  it('stops if Pinterest hands back a bookmark it already gave', async () => {
+    const { fn, calls } = fakeFetch((url) =>
+      isPage(url) ? { body: fixture('pinterest-board.html') } : { body: feedPage(['a'], 'BOOKMARK-1') }
+    )
+    const board = await fetchBoard(BOARD, { fetch: fn, sleep: noSleep })
+    expect(board.pins).toHaveLength(4)
+    expect(calls).toHaveLength(2)
+  })
+
   it('falls back to RSS when the page has no readable data', async () => {
     const { fn } = fakeFetch((url) =>
-      url.endsWith('.rss') ? { body: fixture('pinterest-board.rss') } : { body: '<html>changed</html>' }
+      url.includes('.rss') ? { body: fixture('pinterest-board.rss') } : { body: '<html>changed</html>' }
     )
     const board = await fetchBoard('https://www.pinterest.com/pinterest/girls-night-in/', { fetch: fn })
     expect(board.partial).toBe(true)

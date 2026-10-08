@@ -224,6 +224,21 @@ export const DEFAULT_PLAN: SessionPlan = {
 
 export type StoreName = 'boards' | 'sessions' | 'challenges' | 'presets' | 'settings'
 
+export interface PinterestImport {
+  name: string
+  images: ImageRef[]
+  report: {
+    /** Pins with an image that the sync found. */
+    found: number
+    /** Pin count the board reports; video-only pins make this a little higher. */
+    expected: number
+    /** Pinterest stopped answering before the end; earlier images were kept. */
+    partial: boolean
+    /** Pins whose image could not be downloaded. */
+    failed: number
+  }
+}
+
 export interface PinterestProgress {
   boardId: string
   stage: 'list' | 'download'

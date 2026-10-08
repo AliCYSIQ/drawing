@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { thumbUrl } from '@shared/api'
-import { CATEGORIES, type Board, type BoardKind, type Category, type ImageRef, type PinterestProgress } from '@shared/types'
+import { CATEGORIES, type Board, type BoardKind, type Category, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
 import { ArrowLeft, Folder, Images, Link, Plus, Refresh, Trash } from '../components/Icons'
 import { Button, Empty, PageHeader } from '../components/ui'
 import { uid, useApp } from '../store'
@@ -200,7 +200,7 @@ function PinterestForm({ onClose }: { onClose: () => void }) {
         syncedAt: Date.now()
       }
       setBoards((list) => [...list, board])
-      notify(`Synced ${result.images.length} images from ${result.name}.`)
+      notify(syncMessage(result))
       onClose()
       go({ name: 'library', boardId })
     } catch (err) {
@@ -243,6 +243,18 @@ function PinterestForm({ onClose }: { onClose: () => void }) {
   )
 }
 
+/** Say plainly what a sync got, and what to do when it got less than the board holds. */
+function syncMessage(r: PinterestImport): string {
+  const { found, expected, partial, failed } = r.report
+  if (partial) {
+    const read = expected ? `${found} of ${expected}` : `${found}`
+    return `Pinterest stopped answering after ${read} pins. You have ${r.images.length} images; press Sync again to get the rest.`
+  }
+  if (failed) return `Synced ${r.images.length} images. ${failed} could not be downloaded; press Sync again to retry them.`
+  const skipped = expected > found ? ` (${expected - found} pins without a picture, like videos, were skipped)` : ''
+  return `Synced ${r.images.length} images from ${r.name}${skipped}.`
+}
+
 function usePinterestProgress(boardId: string): PinterestProgress | null {
   const [p, setP] = useState<PinterestProgress | null>(null)
   useEffect(() => window.api.onPinterestProgress((x) => x.boardId === boardId && setP(x)), [boardId])
@@ -280,7 +292,7 @@ function BoardDetail({ board }: { board: Board }) {
       } else if (board.kind === 'pinterest' && board.source) {
         const r = await window.api.importPinterest(board.id, board.source)
         updateBoard(board.id, { images: r.images, syncedAt: Date.now() })
-        notify(`Synced ${r.images.length} images.`)
+        notify(syncMessage(r))
       }
     } catch (err) {
       notify(cleanError(err))
