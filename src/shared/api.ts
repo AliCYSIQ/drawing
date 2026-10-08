@@ -3,6 +3,7 @@ import type {
   HotkeyAction,
   Hotkeys,
   ImageRef,
+  PinterestImport,
   PinterestProgress,
   Region,
   StoreName
@@ -21,7 +22,7 @@ export interface Api {
   importUrl(boardId: string, url: string): Promise<ImageRef>
   /** Save pasted or dropped image bytes into a collection board's folder. */
   importBytes(boardId: string, name: string, bytes: Uint8Array): Promise<ImageRef>
-  importPinterest(boardId: string, url: string): Promise<{ name: string; images: ImageRef[] }>
+  importPinterest(boardId: string, url: string): Promise<PinterestImport>
   onPinterestProgress(cb: (p: PinterestProgress) => void): () => void
   /** Delete the files the app stored for a board (Pinterest cache, collection images). */
   removeBoardFiles(boardId: string): Promise<void>

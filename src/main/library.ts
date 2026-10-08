@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { ImageRef } from '@shared/types'
+import type { ImageRef, PinterestImport } from '@shared/types'
 import { fetchBoard, PINTEREST_UA, type PinImage } from './pinterest'
 import { dataDir } from './store'
 
@@ -117,7 +117,7 @@ export async function importPinterest(
   boardId: string,
   url: string,
   onProgress: (stage: 'list' | 'download', done: number, total: number) => void
-): Promise<{ name: string; images: ImageRef[] }> {
+): Promise<PinterestImport> {
   const board = await fetchBoard(url, {
     fetch: (u, init) => net.fetch(u, init) as never,
     onProgress: (n, total) => onProgress('list', n, total)
@@ -134,18 +134,34 @@ export async function importPinterest(
   const queue = board.pins.map((pin, i) => ({ pin, i }))
   const worker = async () => {
     for (let job = queue.shift(); job; job = queue.shift()) {
-      images[job.i] = await downloadPin(dir, job.pin, existing).catch(() => null)
+      // One retry: image hosts drop the odd request when six run at once.
+      images[job.i] = await downloadPin(dir, job.pin, existing)
+        .catch(() => downloadPin(dir, job.pin, existing))
+        .catch(() => null)
       onProgress('download', ++done, board.pins.length)
     }
   }
   await Promise.all(Array.from({ length: 6 }, worker))
 
-  const keep = new Set(board.pins.map((p) => p.id))
-  for (const [id, f] of existing) if (!keep.has(id)) await rm(join(dir, f), { force: true })
-
   const ok = images.filter((x): x is ImageRef => !!x)
+  const seen = new Set(board.pins.map((p) => p.id))
+  if (board.partial) {
+    // An interrupted sync must not drop images an earlier sync already saved.
+    for (const [id, f] of existing) if (!seen.has(id)) ok.push(refFor(join(dir, f), `https://www.pinterest.com/pin/${id}/`))
+  } else {
+    for (const [id, f] of existing) if (!seen.has(id)) await rm(join(dir, f), { force: true })
+  }
   if (!ok.length) throw new Error('Could not download any images from this board.')
-  return { name: board.name, images: ok }
+  return {
+    name: board.name,
+    images: ok,
+    report: {
+      found: board.pins.length,
+      expected: board.expected,
+      partial: board.partial,
+      failed: images.filter((x) => !x).length
+    }
+  }
 }
 
 async function downloadPin(dir: string, pin: PinImage, existing: Map<string, string>): Promise<ImageRef> {
