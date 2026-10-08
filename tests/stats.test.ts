@@ -6,6 +6,7 @@ import {
   dayKey,
   longestStreak,
   minutesByDay,
+  mistakeSummary,
   recentMistakes,
   totals,
   yearGrid
@@ -75,6 +76,19 @@ describe('stats', () => {
   it('totals minutes, sessions and drawn images', () => {
     const t = totals([session(d(2026, 10, 1), 30, [[], []])])
     expect(t).toEqual({ minutes: 30, sessions: 1, images: 2 })
+  })
+
+  it('summarizes a session against the usual count per session', () => {
+    const older = [
+      session(d(2026, 10, 1), 10, [['tilt'], ['tilt']], true),
+      session(d(2026, 10, 2), 10, [[], ['stiff']], true),
+      session(d(2026, 10, 3), 10, [['tilt']], false) // not reviewed: ignored
+    ]
+    const now = session(d(2026, 10, 4), 10, [['tilt', 'proportions'], ['tilt'], ['tilt']])
+    expect(mistakeSummary(now, [...older, now])).toEqual([
+      { mistake: 'tilt', count: 3, usual: 1 },
+      { mistake: 'proportions', count: 1, usual: 0 }
+    ])
   })
 
   it('ranks mistakes from recent reviewed sessions only', () => {

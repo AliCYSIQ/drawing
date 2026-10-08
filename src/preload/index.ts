@@ -34,7 +34,6 @@ const api: Api = {
   pickRegion: () => ipcRenderer.invoke('capture:pickRegion'),
   capture: (region, sessionId, index) => ipcRenderer.invoke('capture:grab', region, sessionId, index),
   setCaptureProtection: (on) => ipcRenderer.invoke('capture:protect', on),
-  saveMarkup: (sessionId, name, png) => ipcRenderer.invoke('capture:saveMarkup', sessionId, name, png),
 
   minimize: () => ipcRenderer.send('window:minimize'),
   toggleMaximize: () => ipcRenderer.send('window:toggleMaximize'),

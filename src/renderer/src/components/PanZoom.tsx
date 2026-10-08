@@ -41,23 +41,3 @@ export function usePanZoom(initial: View2D = IDENTITY) {
 
   return { view, setView, handlers, reset: () => setView(initial) }
 }
-
-export function PanZoomImage({ src, alt }: { src: string; alt: string }) {
-  const { view, handlers, reset } = usePanZoom()
-  return (
-    <div
-      className="relative h-full w-full cursor-grab overflow-hidden active:cursor-grabbing"
-      {...handlers}
-      onDoubleClick={reset}
-      title="Drag to move, scroll to zoom, double-click to reset"
-    >
-      <img
-        src={src}
-        alt={alt}
-        draggable={false}
-        className="absolute inset-0 h-full w-full object-contain"
-        style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
-      />
-    </div>
-  )
-}

@@ -110,6 +110,36 @@ export function totals(sessions: SessionRecord[]): Totals {
   return { minutes, sessions: sessions.length, images }
 }
 
+/**
+ * This session's tagged mistakes next to how often each one usually shows up
+ * (average per session over the last few reviewed sessions before it).
+ */
+export function mistakeSummary(
+  session: SessionRecord,
+  sessions: SessionRecord[],
+  lastSessions = 5
+): { mistake: string; count: number; usual: number }[] {
+  const count = (s: SessionRecord) => {
+    const m = new Map<string, number>()
+    for (const p of s.poses) for (const x of p.mistakes) m.set(x, (m.get(x) ?? 0) + 1)
+    return m
+  }
+  const now = count(session)
+  const before = sessions
+    .filter((s) => s.reviewed && s.id !== session.id && s.startedAt < session.startedAt)
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(0, lastSessions)
+  const totals = new Map<string, number>()
+  for (const s of before) for (const [k, v] of count(s)) totals.set(k, (totals.get(k) ?? 0) + v)
+  return [...now.entries()]
+    .map(([mistake, c]) => ({
+      mistake,
+      count: c,
+      usual: before.length ? Math.round(((totals.get(mistake) ?? 0) / before.length) * 10) / 10 : 0
+    }))
+    .sort((a, b) => b.count - a.count || a.mistake.localeCompare(b.mistake))
+}
+
 /** Mistakes tagged in the last few reviewed sessions, most frequent first. */
 export function recentMistakes(sessions: SessionRecord[], lastSessions = 5): { mistake: string; count: number }[] {
   const reviewed = sessions

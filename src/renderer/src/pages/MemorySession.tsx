@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { imageUrl } from '@shared/api'
-import { MISTAKES } from '@shared/types'
+import { MISTAKES, type Stroke } from '@shared/types'
 import { Float, Flip, Grey, Pause, Play, Redo, Stop } from '../components/Icons'
-import { MarkupImage, renderMarkup, type Stroke } from '../components/Markup'
+import { Compare, drawingSources, type DrawingSource } from '../components/Compare'
 import { Stage } from '../components/Stage'
-import { Button, IconButton, Segmented } from '../components/ui'
+import { Button, IconButton } from '../components/ui'
 import {
   canTryAgain,
   memoryAdvance,
@@ -22,7 +21,6 @@ import {
 } from '../lib/memoryEngine'
 import { chime } from '../lib/sound'
 import { useApp } from '../store'
-import { Overlay } from './Review'
 
 /**
  * Memory mode, after the study loop from Kim Jung Gi's memory practice:
@@ -37,7 +35,6 @@ export function MemorySession() {
   const [peekHidden, setPeekHidden] = useState(false)
   const [flip, setFlip] = useState(false)
   const [grey, setGrey] = useState(false)
-  const [strokes, setStrokes] = useState<Stroke[]>([])
   const pending = useRef<Promise<unknown>[]>([])
   const floatWasOn = useRef(false)
 
@@ -95,32 +92,16 @@ export function MemorySession() {
     [handleEvents]
   )
 
-  /** Save the red marks for the attempt being revealed, then continue. */
+  /** Continue from the reveal; marks and notes are already saved on the attempt as you make them. */
   const leaveReveal = useCallback(
     (fn: (s: MemoryState, now: number) => MemoryStep) => {
-      const st = useApp.getState()
-      const r = st.run
-      if (!r) return
-      const idx = r.results.length - 1
-      const capture = r.results[idx]?.capturePath
-      if (strokes.length && capture) {
-        const marks = strokes
-        pending.current.push(
-          renderMarkup(marks, imageUrl(capture)).then(async (png) => {
-            if (!png) return
-            const path = await window.api.saveMarkup(r.id, `markup-${String(idx + 1).padStart(3, '0')}`, png)
-            useApp.getState().updateResult(idx, { markupPath: path })
-          })
-        )
-      }
-      setStrokes([])
       apply(fn)
       if (floatWasOn.current && useApp.getState().run?.memory?.phase !== 'done') {
         floatWasOn.current = false
         useApp.getState().setFloat({ on: true })
       }
     },
-    [apply, strokes]
+    [apply]
   )
 
   useEffect(() => {
@@ -178,7 +159,7 @@ export function MemorySession() {
   const urgent = left !== null && left <= 5000
 
   if (m.phase === 'reveal' || m.phase === 'done') {
-    return <Reveal strokes={strokes} setStrokes={setStrokes} leave={leaveReveal} />
+    return <Reveal leave={leaveReveal} />
   }
 
   const studying = m.phase === 'study'
@@ -280,92 +261,61 @@ export function MemorySession() {
   )
 }
 
-function Reveal({
-  strokes,
-  setStrokes,
-  leave
-}: {
-  strokes: Stroke[]
-  setStrokes: (s: Stroke[]) => void
-  leave: (fn: (s: MemoryState, now: number) => MemoryStep) => void
-}) {
+function Reveal({ leave }: { leave: (fn: (s: MemoryState, now: number) => MemoryStep) => void }) {
   const run = useApp((s) => s.run)!
   const updateResult = useApp((s) => s.updateResult)
-  const [view, setView] = useState<'side' | 'overlay'>('side')
   const m = run.memory!
   const idx = run.results.length - 1
   const result = run.results[idx]
   const slot = m.refs[m.index]
   if (!result) return null
-  const ref = imageUrl(slot.imagePath)
-  const capture = result.capturePath ? imageUrl(result.capturePath) : null
-  const earlier = run.results.filter((r, i) => i < idx && r.imageId === result.imageId && r.capturePath)
   const again = canTryAgain(m)
   const last = m.index >= m.refs.length - 1
+
+  // Earlier attempts at this reference, shown between the reference and this one.
+  const earlier: DrawingSource[] = run.results
+    .filter((r, i) => i < idx && r.imageId === result.imageId)
+    .flatMap((r) => {
+      const s = drawingSources(r)[0]
+      return s ? [{ ...s, label: `Try ${r.attempt}` }] : []
+    })
 
   const toggle = (mk: string) =>
     updateResult(idx, { mistakes: result.mistakes.includes(mk) ? result.mistakes.filter((x) => x !== mk) : [...result.mistakes, mk] })
 
+  const addPhotos = async (paths: string[]) => {
+    const kept = await Promise.all(paths.map((p) => window.api.keepPhoto(run.id, p)))
+    const current = useApp.getState().run?.results[idx]
+    updateResult(idx, { photos: [...(current?.photos ?? []), ...kept] })
+  }
+
   return (
     <div className="grid h-full grid-cols-[minmax(0,1fr)_310px]">
-      <div className="flex min-h-0 min-w-0 flex-col gap-3 p-4">
-        <div className="flex items-center gap-3">
-          <h1 className="mr-auto text-[17px] font-semibold">
-            Compare: reference {m.index + 1} of {m.refs.length}, attempt {m.attempt}
-          </h1>
-          {capture && (
-            <Segmented<'side' | 'overlay'>
-              label="Compare"
-              value={view}
-              onChange={setView}
-              options={[
-                { value: 'side', label: 'Side by side' },
-                { value: 'overlay', label: 'Overlay' }
-              ]}
-            />
-          )}
-        </div>
-        <div className="flex min-h-0 flex-1 gap-3">
-          {capture && view === 'overlay' ? (
-            <Overlay reference={ref} drawing={capture} />
-          ) : (
-            <>
-              <figure className="flex min-h-0 min-w-0 flex-1 flex-col">
-                <div className="min-h-0 flex-1 overflow-hidden rounded-md bg-surface">
-                  <img src={ref} alt="Reference" className="h-full w-full object-contain" />
-                </div>
-                <figcaption className="pt-1.5 text-center text-[12.5px] text-muted">Reference</figcaption>
-              </figure>
-              {capture ? (
-                <figure className="flex min-h-0 min-w-0 flex-1 flex-col">
-                  <div className="min-h-0 flex-1 overflow-hidden rounded-md bg-surface">
-                    <MarkupImage src={capture} strokes={strokes} onChange={setStrokes} />
-                  </div>
-                  <figcaption className="flex justify-center gap-3 pt-1.5 text-[12.5px] text-muted">
-                    Your drawing. Draw on it in red to mark what is off.
-                    {strokes.length > 0 && (
-                      <button type="button" className="text-blue hover:underline" onClick={() => setStrokes(strokes.slice(0, -1))}>
-                        Undo mark
-                      </button>
-                    )}
-                  </figcaption>
-                </figure>
-              ) : null}
-            </>
-          )}
-        </div>
-        {!capture && (
-          <p className="text-center text-muted">
-            Put your page next to the reference. Find 4 to 6 big differences (angles, proportions, the spaces between
-            shapes) and mark each one in red on your paper.
-          </p>
-        )}
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <h1 className="px-4 pt-4 text-[17px] font-semibold">
+          Compare: reference {m.index + 1} of {m.refs.length}, attempt {m.attempt}
+        </h1>
+        <Compare
+          key={idx}
+          referencePath={slot.imagePath}
+          sources={drawingSources(result)}
+          earlier={earlier}
+          marks={result.marks ?? {}}
+          onMarks={(path: string, strokes: Stroke[]) =>
+            updateResult(idx, { marks: { ...useApp.getState().run?.results[idx]?.marks, [path]: strokes } })
+          }
+          onAddPhotos={addPhotos}
+          penDefault
+          emptyHint="Put your page next to the reference. Find 4 to 6 big differences (angles, proportions, the spaces between shapes) and mark each one in red on your paper."
+        />
       </div>
 
       <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-line p-5">
         <div>
           <div className="text-[15px] font-semibold">What did you remember wrong?</div>
-          <div className="text-[12.5px] text-muted">Studied {Math.round((result.studyMs ?? 0) / 1000)}s, drew {Math.round(result.spentMs / 1000)}s</div>
+          <div className="text-[12.5px] text-muted">
+            Studied {Math.round((result.studyMs ?? 0) / 1000)}s, drew {Math.round(result.spentMs / 1000)}s
+          </div>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {MISTAKES.filter((mk) => mk !== 'ran out of time').map((mk) => (
@@ -392,23 +342,6 @@ function Reveal({
             className="w-full resize-none rounded-md bg-surface p-2.5 text-ink outline-none ring-1 ring-line placeholder:text-muted/70 focus:ring-blue"
           />
         </label>
-
-        {earlier.length > 0 && (
-          <div>
-            <div className="pb-2 text-muted">Earlier attempts</div>
-            <div className="flex gap-2">
-              {earlier.map((r) => (
-                <div key={r.attempt} className="w-20">
-                  <div className="relative aspect-[3/4] overflow-hidden rounded bg-surface">
-                    <img src={imageUrl(r.capturePath!)} alt={`Attempt ${r.attempt}`} className="absolute inset-0 h-full w-full object-contain" />
-                    {r.markupPath && <img src={imageUrl(r.markupPath)} alt="" className="absolute inset-0 h-full w-full object-contain" />}
-                  </div>
-                  <div className="pt-1 text-center text-[11.5px] text-muted">Attempt {r.attempt}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         <div className="mt-auto grid gap-2">
           {again && (

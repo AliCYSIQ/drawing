@@ -1,14 +1,27 @@
 import { useEffect, useMemo, useState } from 'react'
-import { imageUrl, thumbUrl } from '@shared/api'
-import { MISTAKES, type PoseResult, type SessionRecord } from '@shared/types'
+import { thumbUrl } from '@shared/api'
+import { MISTAKES, type PoseResult, type SessionRecord, type Stroke } from '@shared/types'
+import { Compare, drawingSources, type DrawingSource } from '../components/Compare'
 import { ArrowLeft, ArrowRight, Camera, Check, Redo } from '../components/Icons'
-import { MarkupImage } from '../components/Markup'
-import { PanZoomImage, usePanZoom } from '../components/PanZoom'
-import { Button, IconButton, Segmented } from '../components/ui'
+import { Button, IconButton } from '../components/ui'
 import { formatDuration, formatSeconds } from '../lib/schedule'
+import { mistakeSummary } from '../lib/stats'
 import { useApp } from '../store'
 
-type Mode = 'side' | 'overlay'
+/** Earlier tries at the same reference: memory-mode attempts before this one, or the pose a redo came from. */
+function earlierTries(session: SessionRecord, pose: PoseResult, original?: SessionRecord): DrawingSource[] {
+  const first = (p: PoseResult, label: string): DrawingSource[] => {
+    const s = drawingSources(p)[0]
+    return s ? [{ ...s, label }] : []
+  }
+  if (pose.attempt) {
+    return session.poses
+      .filter((p) => p.imageId === pose.imageId && (p.attempt ?? 0) < pose.attempt!)
+      .flatMap((p) => first(p, `Try ${p.attempt}`))
+  }
+  const before = original?.poses.find((p) => p.imageId === pose.imageId)
+  return before ? first(before, 'Earlier try') : []
+}
 
 export function Review({ sessionId }: { sessionId: string }) {
   const session = useApp((s) => s.sessions.find((x) => x.id === sessionId))
@@ -19,11 +32,12 @@ export function Review({ sessionId }: { sessionId: string }) {
   const startRun = useApp((s) => s.startRun)
   const notify = useApp((s) => s.notify)
   const [i, setI] = useState(0)
+  const [summary, setSummary] = useState(false)
 
-  const earlier = useMemo(() => {
-    const original = session?.redoOf ? sessions.find((s) => s.id === session.redoOf) : undefined
-    return (imageId: string) => original?.poses.find((p) => p.imageId === imageId)
-  }, [session, sessions])
+  const original = useMemo(
+    () => (session?.redoOf ? sessions.find((s) => s.id === session.redoOf) : undefined),
+    [session, sessions]
+  )
 
   const count = session?.poses.length ?? 0
   const pose = session?.poses[Math.min(i, count - 1)]
@@ -36,6 +50,7 @@ export function Review({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (summary || e.ctrlKey || e.altKey) return
       if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
       if (e.key === 'ArrowRight') setI((v) => Math.min(count - 1, v + 1))
       else if (e.key === 'ArrowLeft') setI((v) => Math.max(0, v - 1))
@@ -66,40 +81,52 @@ export function Review({ sessionId }: { sessionId: string }) {
     })
   }
 
-  const addPhotos = async (paths?: string[]) => {
-    const picked = paths ?? (await window.api.pickPhotos())
+  const keep = (paths: string[]) => Promise.all(paths.map((p) => window.api.keepPhoto(session.id, p)))
+
+  const addPagePhotos = async () => {
+    const picked = await window.api.pickPhotos()
     if (!picked.length) return
-    const kept = await Promise.all(picked.map((p) => window.api.keepPhoto(session.id, p)))
+    const kept = await keep(picked)
     updateSession(session.id, (s) => ({ ...s, pagePhotos: [...s.pagePhotos, ...kept] }))
-    notify(`Added ${kept.length} ${kept.length === 1 ? 'photo' : 'photos'}.`)
+    notify(`Added ${kept.length} page ${kept.length === 1 ? 'photo' : 'photos'}. They show for every pose.`)
   }
 
+  const addPosePhotos = async (paths: string[]) => {
+    const kept = await keep(paths)
+    const index = i
+    updateSession(session.id, (s) => ({
+      ...s,
+      poses: s.poses.map((p, k) => (k === index ? { ...p, photos: [...(p.photos ?? []), ...kept] } : p))
+    }))
+  }
+
+  const setMarks = (path: string, strokes: Stroke[]) =>
+    updatePose(session.id, i, { marks: { ...pose.marks, [path]: strokes } })
+
   return (
-    <div
-      className="flex h-full flex-col"
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault()
-        const paths = [...e.dataTransfer.files].map((f) => window.api.pathForFile(f)).filter(Boolean)
-        if (paths.length) void addPhotos(paths)
-      }}
-    >
+    <div className="relative flex h-full flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-5 py-3">
         <div className="mr-auto">
           <h1 className="text-[17px] font-semibold">{session.redoOf ? 'Review: second try' : 'Review'}</h1>
           <div className="text-[12.5px] text-muted">
-            {new Date(session.startedAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            {new Date(session.startedAt).toLocaleString(undefined, {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit'
+            })}
             {', '}
             {session.poses.length} poses, {formatDuration(session.activeMs / 1000)}
           </div>
         </div>
-        <Button onClick={() => addPhotos()}>
+        <Button onClick={addPagePhotos} title="A photo of a whole paper page; it shows next to every pose">
           <Camera size={16} /> Add page photos
         </Button>
         <Button onClick={redo} disabled={!flagged.length}>
           <Redo size={16} /> Redo flagged{flagged.length ? ` (${flagged.length})` : ''}
         </Button>
-        <Button tone="primary" onClick={finish}>
+        <Button tone="primary" onClick={() => setSummary(true)}>
           <Check size={16} /> Done
         </Button>
       </div>
@@ -130,7 +157,16 @@ export function Review({ sessionId }: { sessionId: string }) {
           ))}
         </nav>
 
-        <Compare key={i} session={session} pose={pose} earlier={earlier(pose.imageId)} />
+        <Compare
+          key={i}
+          referencePath={pose.imagePath}
+          sources={drawingSources(pose, session.pagePhotos)}
+          earlier={earlierTries(session, pose, original)}
+          marks={pose.marks ?? {}}
+          onMarks={setMarks}
+          onAddPhotos={addPosePhotos}
+          emptyHint="Hold your page next to the screen and check the main line first, then proportions and tilt. Or add a photo to see them side by side."
+        />
 
         <aside aria-label="Notes for this pose" className="flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-line p-5">
           <div>
@@ -195,161 +231,101 @@ export function Review({ sessionId }: { sessionId: string }) {
             <IconButton label="Previous pose (←)" disabled={i === 0} onClick={() => setI(i - 1)}>
               <ArrowLeft size={18} />
             </IconButton>
-            <span className="text-[12.5px] text-muted">Keys 1–7 tag mistakes</span>
+            <span className="text-center text-[12.5px] text-muted">Keys 1–7 tag, M marks</span>
             <IconButton label="Next pose (→)" disabled={i >= count - 1} onClick={() => setI(i + 1)}>
               <ArrowRight size={18} />
             </IconButton>
           </div>
         </aside>
       </div>
-    </div>
-  )
-}
 
-function Pane({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <figure className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md bg-surface">{children}</div>
-      <figcaption className="pt-1.5 text-center text-[12.5px] text-muted">{label}</figcaption>
-    </figure>
-  )
-}
-
-function Compare({ session, pose, earlier }: { session: SessionRecord; pose: PoseResult; earlier?: PoseResult }) {
-  const [mode, setMode] = useState<Mode>('side')
-  const [photo, setPhoto] = useState(0)
-  const ref = imageUrl(pose.imagePath)
-  const drawing = pose.capturePath ? imageUrl(pose.capturePath) : null
-  const photos = session.pagePhotos
-  // Memory mode: every attempt at this reference, so you can see them improve.
-  const attempts = pose.attempt
-    ? session.poses.filter((p) => p.imageId === pose.imageId && p.attempt && p.capturePath)
-    : []
-
-  if (attempts.length > 1 && mode === 'side') {
-    return (
-      <div className="flex min-h-0 min-w-0 flex-col gap-3 p-4">
-        <div className="flex items-center gap-3">
-          <Segmented<Mode>
-            label="Compare"
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: 'side', label: 'All attempts' },
-              { value: 'overlay', label: 'Overlay' }
-            ]}
-          />
-        </div>
-        <div className="flex min-h-0 flex-1 gap-3">
-          <Pane label="Reference">
-            <img src={ref} alt="Reference" className="h-full w-full object-contain" />
-          </Pane>
-          {attempts.map((a) => (
-            <Pane key={a.attempt} label={a.attempt === pose.attempt ? `Attempt ${a.attempt} (this one)` : `Attempt ${a.attempt}`}>
-              <MarkupImage src={imageUrl(a.capturePath!)} strokes={[]} savedMarkup={a.markupPath ? imageUrl(a.markupPath) : undefined} />
-            </Pane>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex min-h-0 min-w-0 flex-col gap-3 p-4">
-      {drawing && (
-        <div className="flex items-center gap-3">
-          <Segmented<Mode>
-            label="Compare"
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: 'side', label: 'Side by side' },
-              { value: 'overlay', label: 'Overlay' }
-            ]}
-          />
-          {mode === 'overlay' && <span className="text-[12.5px] text-muted">Drag your drawing to line it up, scroll to resize.</span>}
-        </div>
-      )}
-
-      <div className="flex min-h-0 flex-1 gap-3">
-        {drawing && mode === 'overlay' ? (
-          <Overlay reference={ref} drawing={drawing} />
-        ) : (
-          <>
-            <Pane label="Reference">
-              <img src={ref} alt="Reference" className="h-full w-full object-contain" />
-            </Pane>
-            {earlier?.capturePath && (
-              <Pane label="Earlier try">
-                <img src={imageUrl(earlier.capturePath)} alt="Earlier try" className="h-full w-full object-contain" />
-              </Pane>
-            )}
-            {drawing ? (
-              <Pane label="Your drawing">
-                <MarkupImage src={drawing} strokes={[]} savedMarkup={pose.markupPath ? imageUrl(pose.markupPath) : undefined} />
-              </Pane>
-            ) : photos.length ? (
-              <Pane label={photos.length > 1 ? `Page photo ${photo + 1} of ${photos.length}` : 'Page photo'}>
-                <div className="relative h-full">
-                  <PanZoomImage src={imageUrl(photos[Math.min(photo, photos.length - 1)])} alt="Page photo" />
-                  {photos.length > 1 && (
-                    <div className="absolute bottom-2 right-2 flex gap-1">
-                      <IconButton label="Previous photo" className="bg-bg/80" onClick={() => setPhoto((p) => (p - 1 + photos.length) % photos.length)}>
-                        <ArrowLeft size={16} />
-                      </IconButton>
-                      <IconButton label="Next photo" className="bg-bg/80" onClick={() => setPhoto((p) => (p + 1) % photos.length)}>
-                        <ArrowRight size={16} />
-                      </IconButton>
-                    </div>
-                  )}
-                </div>
-              </Pane>
-            ) : null}
-          </>
-        )}
-      </div>
-
-      {!drawing && !photos.length && (
-        <p className="text-center text-muted">
-          Hold your page next to the screen. Check the main line first, then proportions and tilt. Add a photo of the page to see
-          them side by side.
-        </p>
-      )}
-    </div>
-  )
-}
-
-export function Overlay({ reference, drawing }: { reference: string; drawing: string }) {
-  const [opacity, setOpacity] = useState(55)
-  const { view, handlers, reset } = usePanZoom()
-  return (
-    <figure className="flex min-h-0 flex-1 flex-col">
-      <div className="relative min-h-0 flex-1 cursor-grab overflow-hidden rounded-md bg-surface active:cursor-grabbing" {...handlers}>
-        <img src={reference} alt="Reference" draggable={false} className="absolute inset-0 h-full w-full object-contain" />
-        <img
-          src={drawing}
-          alt="Your drawing over the reference"
-          draggable={false}
-          className="absolute inset-0 h-full w-full object-contain"
-          style={{ opacity: opacity / 100, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+      {summary && (
+        <Summary
+          session={session}
+          sessions={sessions}
+          flagged={flagged.length}
+          onRedo={redo}
+          onFinish={finish}
+          onBack={() => setSummary(false)}
         />
+      )}
+    </div>
+  )
+}
+
+/** What this review found, next to how often each mistake usually shows up. */
+function Summary({
+  session,
+  sessions,
+  flagged,
+  onRedo,
+  onFinish,
+  onBack
+}: {
+  session: SessionRecord
+  sessions: SessionRecord[]
+  flagged: number
+  onRedo: () => void
+  onFinish: () => void
+  onBack: () => void
+}) {
+  const rows = mistakeSummary(session, sessions)
+  const hasHistory = sessions.some((s) => s.reviewed && s.id !== session.id && s.startedAt < session.startedAt)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onBack()
+      else if (e.key === 'Enter') onFinish()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onBack, onFinish])
+
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-bg/70" role="dialog" aria-label="Review summary">
+      <div className="w-[min(460px,90vw)] rounded-lg bg-surface p-6 shadow-[0_12px_40px_rgba(0,0,0,0.4)] ring-1 ring-line">
+        <h2 className="text-[17px] font-semibold">Review done</h2>
+        {rows.length ? (
+          <>
+            <p className="mt-1 text-muted">What you tagged this session{hasHistory ? ', and how often it usually comes up' : ''}:</p>
+            <table className="mt-4 w-full">
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.mistake} className="border-t border-line">
+                    <td className="py-2 first-letter:uppercase">{r.mistake}</td>
+                    <td className="tnum py-2 text-right font-semibold">{r.count}×</td>
+                    {hasHistory && (
+                      <td className={`tnum w-36 py-2 text-right text-[12.5px] ${r.count > r.usual ? 'text-red' : 'text-muted'}`}>
+                        usually {r.usual}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        ) : (
+          <p className="mt-1 text-muted">No mistakes tagged this time.</p>
+        )}
+        {flagged > 0 && (
+          <p className="mt-4 text-muted">
+            {flagged} {flagged === 1 ? 'pose is' : 'poses are'} flagged to draw again.
+          </p>
+        )}
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
+          <Button tone="ghost" onClick={onBack}>
+            Back to review
+          </Button>
+          {flagged > 0 && (
+            <Button onClick={onRedo}>
+              <Redo size={16} /> Redo flagged ({flagged})
+            </Button>
+          )}
+          <Button tone="primary" onClick={onFinish}>
+            Finish
+          </Button>
+        </div>
       </div>
-      <figcaption className="flex items-center justify-center gap-3 pt-2 text-[12.5px] text-muted">
-        <label className="flex items-center gap-2">
-          Drawing opacity
-          <input
-            type="range"
-            min={10}
-            max={100}
-            value={opacity}
-            onChange={(e) => setOpacity(Number(e.target.value))}
-            className="h-1 w-32 accent-[var(--blue)]"
-          />
-        </label>
-        <button type="button" onClick={reset} className="text-blue hover:underline">
-          Reset position
-        </button>
-      </figcaption>
-    </figure>
+    </div>
   )
 }

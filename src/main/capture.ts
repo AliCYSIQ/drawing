@@ -55,14 +55,6 @@ function sessionDir(sessionId: string): string {
   return dataDir('captures', sessionId.replace(/[^a-zA-Z0-9_-]/g, ''))
 }
 
-export async function saveMarkup(sessionId: string, name: string, png: Uint8Array): Promise<string> {
-  const dir = sessionDir(sessionId)
-  await mkdir(dir, { recursive: true })
-  const file = join(dir, `${name.replace(/[^a-zA-Z0-9_-]/g, '')}.png`)
-  await writeFile(file, png)
-  return file
-}
-
 export async function captureRegion(region: Region, sessionId: string, index: number): Promise<string | null> {
   const display = screen.getAllDisplays().find((d) => d.id === region.displayId) ?? screen.getPrimaryDisplay()
   const sf = display.scaleFactor

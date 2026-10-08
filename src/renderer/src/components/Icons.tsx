@@ -161,6 +161,18 @@ export const ArrowRight = (p: IconProps) => (
     <path d="M9 5l7 7-7 7" />
   </Icon>
 )
+export const Pen = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 20l1.2-4.6L15.6 5a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z" />
+    <path d="M13.5 7l3.5 3.5" />
+  </Icon>
+)
+export const Undo = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M9 7L5 11l4 4" />
+    <path d="M5 11h9.5a4.5 4.5 0 0 1 0 9H12" />
+  </Icon>
+)
 export const Crop = (p: IconProps) => (
   <Icon {...p}>
     <path d="M7 3v14h14M3 7h14v14" />
