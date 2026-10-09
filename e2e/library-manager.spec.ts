@@ -115,4 +115,11 @@ test('Practice: double-click opens a folder; a click picks the whole folder', as
   await expect(page.getByText('3 images in all', { exact: true })).toBeVisible()
   await expect(page.getByText(/everything inside: 1 collection, 3 images/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start drawing' })).toBeEnabled()
+
+  // Opening the picked folder right after picking it keeps the pick.
+  await page.getByRole('button', { name: /^Animals, folder/ }).dblclick()
+  await expect(page.getByRole('navigation', { name: 'Folder path' })).toContainText('Animals')
+  await expect(page.getByText(/everything inside: 1 collection/)).toBeVisible()
+  await page.getByRole('navigation', { name: 'Folder path' }).getByRole('button', { name: 'Library' }).click()
+  await expect(page.getByRole('button', { name: /^Animals, folder/ })).toHaveAttribute('aria-pressed', 'true')
 })

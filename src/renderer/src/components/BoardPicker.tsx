@@ -36,12 +36,13 @@ export function BoardPicker({
   }
   /**
    * A double-click arrives as two clicks first (pick, un-pick). What was
-   * picked before them is kept, so opening a folder never changes the pick.
+   * picked before its first click is kept, so opening a folder never changes
+   * the pick.
    */
-  const beforeClicks = useRef<{ at: number; boardIds: string[]; folderIds: string[] } | null>(null)
+  const beforeClicks = useRef<{ boardIds: string[]; folderIds: string[] } | null>(null)
   const openFolder = (id: string, viaDoubleClick: boolean) => {
     const b = beforeClicks.current
-    if (viaDoubleClick && b && Date.now() - b.at < 800) onChange(b.boardIds, b.folderIds)
+    if (viaDoubleClick && b) onChange(b.boardIds, b.folderIds)
     beforeClicks.current = null
     open(id)
   }
@@ -80,9 +81,8 @@ export function BoardPicker({
     if (viaFolder.has(id)) return
     onChange(pickedBoards.includes(id) ? pickedBoards.filter((v) => v !== id) : [...pickedBoards, id], pickedFolders)
   }
-  const toggleFolder = (f: Folder) => {
-    const prev = beforeClicks.current
-    if (!prev || Date.now() - prev.at > 800) beforeClicks.current = { at: Date.now(), boardIds: pickedBoards, folderIds: pickedFolders }
+  const toggleFolder = (f: Folder, clickCount = 1) => {
+    if (clickCount === 1) beforeClicks.current = { boardIds: pickedBoards, folderIds: pickedFolders }
     if (pickedAbove(f)) return
     if (pickedFolders.includes(f.id)) return onChange(pickedBoards, pickedFolders.filter((x) => x !== f.id))
     // A picked folder takes over what was picked inside it, one by one or as sub-folders.
@@ -163,7 +163,7 @@ export function BoardPicker({
               picked={pickedFolders.includes(f.id)}
               included={pickedAbove(f)?.name}
               onOpen={(viaDoubleClick) => openFolder(f.id, viaDoubleClick)}
-              onPick={() => toggleFolder(f)}
+              onPick={(clicks) => toggleFolder(f, clicks)}
             />
           ))}
         </div>

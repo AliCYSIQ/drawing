@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, relative, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { FolderInfo, ImageRef, PinterestImport } from '@shared/types'
+import type { FolderInfo, FolderTree, ImageRef, PinterestImport } from '@shared/types'
 import { fetchBoard, PINTEREST_UA, type PinImage } from './pinterest'
 import { timedSync } from './log'
 import { dataDir } from './store'
@@ -36,18 +36,34 @@ export async function scanFolder(dir: string, recursive = true): Promise<ImageRe
   return paths.map((p) => refFor(p))
 }
 
-/** What a folder holds, so the app can ask what to do with its sub-folders. */
-export async function inspectFolder(dir: string): Promise<FolderInfo> {
-  const entries = await readdir(dir, { withFileTypes: true })
+/**
+ * A folder and its sub-folders that hold images, all levels down. Links
+ * (symlinks, junctions) are not followed, so a loop can't trap it.
+ */
+export async function folderTree(dir: string, depth = 0): Promise<FolderTree> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
   const direct = entries.filter((e) => e.isFile() && isImagePath(e.name)).length
-  const subfolders: FolderInfo['subfolders'] = []
-  for (const e of entries.filter((x) => x.isDirectory()).sort((a, b) => byName(a.name, b.name))) {
-    const path = join(dir, e.name)
-    const count = (await scanFolder(path).catch(() => [])).length
-    if (count) subfolders.push({ name: e.name, path, count })
+  const children: FolderTree[] = []
+  if (depth < 32) {
+    for (const e of entries.filter((x) => x.isDirectory()).sort((a, b) => byName(a.name, b.name))) {
+      const t = await folderTree(join(dir, e.name), depth + 1)
+      if (t.total) children.push(t)
+    }
   }
   const name = dir.split(/[\\/]/).filter(Boolean).pop() ?? 'Folder'
-  return { name, path: dir, direct, subfolders }
+  return { name, path: dir, direct, total: direct + children.reduce((a, c) => a + c.total, 0), children }
+}
+
+/** What a folder holds, so the app can ask what to do with its sub-folders. */
+export async function inspectFolder(dir: string): Promise<FolderInfo> {
+  const tree = await folderTree(dir)
+  return {
+    name: tree.name,
+    path: dir,
+    direct: tree.direct,
+    subfolders: tree.children.map((c) => ({ name: c.name, path: c.path, count: c.total })),
+    tree
+  }
 }
 
 /**

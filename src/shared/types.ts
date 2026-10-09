@@ -38,6 +38,18 @@ export interface Board {
   syncedAt?: number
 }
 
+/** A folder on disk and the sub-folders in it that hold images, all levels down. */
+export interface FolderTree {
+  name: string
+  path: string
+  /** Images directly in this folder. */
+  direct: number
+  /** Images here and in every sub-folder. */
+  total: number
+  /** Sub-folders with images somewhere inside them, by name. */
+  children: FolderTree[]
+}
+
 /** What a folder on disk holds, before adding it. */
 export interface FolderInfo {
   name: string
@@ -46,6 +58,8 @@ export interface FolderInfo {
   direct: number
   /** Sub-folders that contain images, with their image count (including deeper folders). */
   subfolders: { name: string; path: string; count: number }[]
+  /** The whole structure, for keeping it when adding. */
+  tree: FolderTree
 }
 
 /** A folder in the library. Holds folders and collections, like a folder in Windows. */
@@ -251,7 +265,12 @@ export interface Hotkeys {
 
 export type HotkeyAction = keyof Hotkeys
 
-/** What to do with sub-folders when adding a folder. 'ask' shows the choice each time. */
+/**
+ * What to do with sub-folders when adding a folder. 'ask' shows the choice
+ * each time. 'split' keeps the folder structure (folders and collections,
+ * all levels down); 'one' makes one collection; 'top' takes only the images
+ * directly in the folder.
+ */
 export type FolderImport = 'ask' | 'one' | 'split' | 'top'
 
 /** Where the updater is; 'disabled' when running from source (not installed). */

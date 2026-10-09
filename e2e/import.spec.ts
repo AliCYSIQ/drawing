@@ -10,10 +10,11 @@ let dataDir: string
 let root: string
 let rootName: string
 
-// root/        2 images
-// root/Heads   3 images
-// root/Hands   2 images
-// root/Empty   none (never offered)
+// root/                 2 images
+// root/Heads            3 images
+// root/Hands            2 images
+// root/Hands/Fingers    1 image
+// root/Empty            none (never offered)
 test.beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'drawing-import-'))
   root = mkdtempSync(join(tmpdir(), 'Human-'))
@@ -21,6 +22,7 @@ test.beforeAll(async () => {
   makeFixtures(root, 2)
   makeFixtures(join(root, 'Heads'), 3)
   makeFixtures(join(root, 'Hands'), 2)
+  makeFixtures(join(root, 'Hands', 'Fingers'), 1)
   mkdirSync(join(root, 'Empty'))
   app = await electron.launch({
     args: [join(__dirname, '..', 'out', 'main', 'index.js')],
@@ -45,20 +47,27 @@ const boards = async () => {
   return page.evaluate(async () => (await window.api.load<{ name: string; kind: string; folderId?: string; images: { path: string }[] }[]>('boards'))!)
 }
 
-test('a folder with sub-folders asks; "one per sub-folder" groups them in a new folder', async () => {
+test('a folder with sub-folders asks, previews, and keeps its structure all levels down', async () => {
   await page.getByRole('button', { name: 'Add folder' }).click()
   await expect(sheet()).toBeVisible()
   // Only sub-folders that hold images are offered.
-  await expect(sheet().getByText('Heads')).toBeVisible()
+  await expect(sheet().getByRole('group', { name: /Sub-folders to include/ }).getByText('Heads')).toBeVisible()
   await expect(sheet().getByText('Empty')).toHaveCount(0)
-  await sheet().getByText('A collection for each sub-folder').click()
+  // Keeping the structure is the default, and the preview shows the result.
+  await expect(sheet().getByRole('radio', { name: /Keep the folder structure/ })).toBeChecked()
+  const preview = sheet().getByRole('region', { name: 'What will be added' })
+  await expect(preview).toContainText('2 folders, 4 collections, 8 images')
+  await expect(preview).toContainText('Fingers')
   await sheet().getByRole('button', { name: 'Add' }).click()
-  await expect(page.getByText(/Added 3 collections \(7 images\)/)).toBeVisible()
+  await expect(page.getByText(/Added 4 collections \(8 images\) in the folder .*, with 1 folder inside/)).toBeVisible()
 
   await page.getByRole('button', { name: new RegExp(`^${rootName}, folder`) }).dblclick()
   await expect(page.getByRole('button', { name: /^Heads, 3 images/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: /^Hands, 2 images/ })).toBeVisible()
   await expect(page.getByRole('button', { name: new RegExp(`\\(loose images\\), 2 images`) })).toBeVisible()
+  // Hands has a sub-folder, so it is a folder holding its own images and Fingers.
+  await page.getByRole('button', { name: /^Hands, folder/ }).dblclick()
+  await expect(page.getByRole('button', { name: /^Hands \(loose images\), 2 images/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Fingers, 1 images/ })).toBeVisible()
   await page.getByRole('navigation', { name: 'Folder path' }).getByRole('button', { name: 'Library' }).click()
 })
 
@@ -76,16 +85,17 @@ test('"only the top folder" leaves sub-folders out, also on rescan', async () =>
 test('"one collection" with copy keeps its own copies; "remember" stops the question', async () => {
   await page.getByRole('button', { name: 'Library', exact: true }).first().click()
   await page.getByRole('button', { name: 'Add folder' }).click()
+  await sheet().getByText('One collection with everything').click()
   await sheet().getByText('Copy the images into the app').click()
   await sheet().getByText('Remember my choice').click()
   await sheet().getByRole('button', { name: 'Add' }).click()
-  await expect(page.getByText(`Added 7 images from ${rootName}.`)).toBeVisible()
+  await expect(page.getByText(`Added 8 images from ${rootName}.`)).toBeVisible()
   const copied = (await boards()).find((b) => b.kind === 'collection')!
-  expect(copied.images).toHaveLength(7)
+  expect(copied.images).toHaveLength(8)
   expect(copied.images.every((i) => i.path.startsWith(dataDir))).toBe(true)
 
   // Remembered: the next add happens straight away.
   await page.getByRole('button', { name: 'Add folder' }).click()
   await expect(sheet()).toHaveCount(0)
-  await expect(page.getByText(`Added 7 images from ${rootName}.`)).toBeVisible()
+  await expect(page.getByText(`Added 8 images from ${rootName}.`)).toBeVisible()
 })

@@ -5,6 +5,7 @@ import { DeleteDialog, FolderBrowser } from '../components/FolderBrowser'
 import { FolderDialog } from '../components/FolderDialog'
 import { ArrowLeft, Copy, Folder as FolderIcon, Images, Link, Plus, Refresh, Star, Trash } from '../components/Icons'
 import { ImportSheet, type ImportOptions } from '../components/ImportSheet'
+import { planImport, type PlanNode } from '../lib/importPlan'
 import { TagEditor } from '../components/TagEditor'
 import { Button, Empty, IconButton } from '../components/ui'
 import {
@@ -92,64 +93,52 @@ function BoardList({ folderId }: { folderId?: string }) {
     setSheet(info)
   }
 
-  /** Add a folder the way the import sheet (or the remembered choice) says. */
+  /** Add a folder the way the import sheet (or the remembered choice) says; the same plan as its preview. */
   const importFolder = async (info: FolderInfo, o: ImportOptions) => {
     setSheet(null)
     if (o.remember) updateSettings({ folderImport: o.choice })
+    const plan = planImport(info.tree, o.choice, o.subfolders)
+    if (!plan) return notify('Nothing to add: the chosen folders have no images.')
     const now = Date.now()
-    const allSubs = o.subfolders.length === info.subfolders.length
+    const newFolders: Folder[] = []
+    const made: Board[] = []
 
-    // One collection; linked to the folder unless only some sub-folders were picked.
-    const collection = async (name: string, dir: string, recursive: boolean, folder?: string, refs?: ImageRef[]) => {
-      let images = refs ?? (await window.api.scanFolder(dir, recursive))
-      if (!images.length) return null
+    const build = async (node: PlanNode, parent: string | undefined): Promise<void> => {
+      if (node.type === 'folder') {
+        const f: Folder = { id: uid(), name: node.name, parentId: parent, createdAt: now }
+        newFolders.push(f)
+        for (const c of node.children) await build(c, f.id)
+        return
+      }
+      // A collection links to its folder on disk, unless only some sub-folders were picked (then it is a list of images).
+      let images = node.only
+        ? [...(await window.api.scanFolder(node.dir, false)), ...(await Promise.all(node.only.map((p) => window.api.scanFolder(p)))).flat()]
+        : await window.api.scanFolder(node.dir, node.recursive)
+      if (!images.length) return
       const id = uid()
-      if (o.copy) images = await window.api.copyImages(id, images, dir)
-      const board: Board = {
+      if (o.copy) images = await window.api.copyImages(id, images, node.dir)
+      made.push({
         id,
-        name,
-        kind: o.copy ? 'collection' : refs ? 'files' : 'folder',
+        name: node.name,
+        kind: o.copy ? 'collection' : node.only ? 'files' : 'folder',
         tags: [],
-        folderId: folder,
-        source: dir,
-        ...(recursive ? {} : { recursive: false }),
+        folderId: parent,
+        source: node.dir,
+        ...(node.recursive ? {} : { recursive: false }),
         images,
         createdAt: now,
         syncedAt: now
-      }
-      return board
+      })
     }
-
-    let made: Board[] = []
-    if (o.choice === 'top') {
-      made = [await collection(info.name, info.path, false, folderId)].filter((b): b is Board => !!b)
-    } else if (o.choice === 'one') {
-      if (allSubs) {
-        made = [await collection(info.name, info.path, true, folderId)].filter((b): b is Board => !!b)
-      } else {
-        const refs = [
-          ...(await window.api.scanFolder(info.path, false)),
-          ...(await Promise.all(o.subfolders.map((p) => window.api.scanFolder(p)))).flat()
-        ]
-        made = [await collection(info.name, info.path, true, folderId, refs)].filter((b): b is Board => !!b)
-      }
-    } else {
-      const group: Folder = { id: uid(), name: info.name, parentId: folderId, createdAt: now }
-      setLibrary((l) => ({ ...l, folders: [...l.folders, group] }))
-      const subs = info.subfolders.filter((x) => o.subfolders.includes(x.path))
-      const parts = await Promise.all([
-        info.direct ? collection(`${info.name} (loose images)`, info.path, false, group.id) : null,
-        ...subs.map((x) => collection(x.name, x.path, true, group.id))
-      ])
-      made = parts.filter((b): b is Board => !!b)
-    }
+    await build(plan, folderId)
     if (!made.length) return notify('Nothing to add: the chosen folders have no images.')
+    if (newFolders.length) setLibrary((l) => ({ ...l, folders: [...l.folders, ...newFolders] }))
     setBoards((list) => [...list, ...made])
     const images = made.reduce((a, b) => a + b.images.length, 0)
     notify(
-      made.length === 1
+      plan.type === 'collection'
         ? `Added ${images} images from ${info.name}.`
-        : `Added ${made.length} collections (${images} images) in the folder “${info.name}”.`
+        : `Added ${made.length} ${made.length === 1 ? 'collection' : 'collections'} (${images} images) in the folder “${info.name}”${newFolders.length > 1 ? `, with ${newFolders.length - 1} ${newFolders.length === 2 ? 'folder' : 'folders'} inside` : ''}.`
     )
   }
 

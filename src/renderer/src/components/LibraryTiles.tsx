@@ -220,7 +220,8 @@ export function PickFolderChip({
   included?: string
   /** `viaDoubleClick`: the two clicks before it already picked and un-picked. */
   onOpen: (viaDoubleClick: boolean) => void
-  onPick: () => void
+  /** `clickCount`: 1 for a single click, 2 for the second click of a double-click. */
+  onPick: (clickCount: number) => void
 }) {
   const on = picked || !!included
   return (
@@ -229,7 +230,7 @@ export function PickFolderChip({
         type="button"
         aria-pressed={on}
         aria-label={`${folder.name}, folder, ${count}`}
-        onClick={onPick}
+        onClick={(e) => onPick(e.detail || 1)}
         onDoubleClick={() => onOpen(true)}
         onKeyDown={(e) => {
           if (e.key !== 'Enter') return

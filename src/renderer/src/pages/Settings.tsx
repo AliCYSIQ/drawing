@@ -99,7 +99,7 @@ export function Settings() {
           >
             <option value="ask">Ask each time</option>
             <option value="one">One collection with everything</option>
-            <option value="split">A collection for each sub-folder</option>
+            <option value="split">Keep the folder structure (folders and collections)</option>
             <option value="top">Only the images directly in the folder</option>
           </select>
         </Field>
