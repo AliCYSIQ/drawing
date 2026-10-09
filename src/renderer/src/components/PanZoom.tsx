@@ -8,14 +8,18 @@ export interface View2D {
 
 export const IDENTITY: View2D = { x: 0, y: 0, scale: 1 }
 
-/** Drag to move, scroll to zoom around the pointer. */
+/**
+ * Drag to move, scroll to zoom around the pointer. The left, middle and right
+ * buttons all move it; while the red pen is on, the pen takes the left button
+ * (it stops the event), so the right button or Space + drag still move.
+ */
 export function usePanZoom(initial: View2D = IDENTITY) {
   const [view, setView] = useState<View2D>(initial)
   const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null)
 
   const handlers = {
     onPointerDown(e: React.PointerEvent) {
-      if (e.button !== 0) return
+      if (e.button > 2) return
       drag.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y }
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     },
@@ -26,6 +30,10 @@ export function usePanZoom(initial: View2D = IDENTITY) {
     },
     onPointerUp() {
       drag.current = null
+    },
+    onContextMenu(e: React.MouseEvent) {
+      // Right-drag moves the image; no browser menu.
+      e.preventDefault()
     },
     onWheel(e: React.WheelEvent) {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()

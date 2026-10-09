@@ -7,6 +7,7 @@ import { captureRegion, pickRegion } from './capture'
 import { attachFloat, boundsBeforeFloat, getFloat, setFloat, setHotkeys, setSessionActive } from './float'
 import {
   copyImages,
+  deleteSessionFile,
   importBytes,
   importPinterest,
   importUrl,
@@ -165,6 +166,7 @@ function registerIpc(): void {
     return r.canceled ? [] : r.filePaths
   })
   handle('library:keepPhoto', (sessionId: string, path: string) => keepPhoto(sessionId, path))
+  handle('library:deleteSessionFile', (path: string) => deleteSessionFile(path))
   handle('library:scanFolder', (dir: string, recursive?: boolean) => scanFolder(dir, recursive !== false))
   handle('library:inspectFolder', (dir: string) => inspectFolder(dir))
   handle('library:copyImages', (boardId: string, refs: ImageRef[], baseDir?: string) => copyImages(boardId, refs, baseDir))

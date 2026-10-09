@@ -67,14 +67,31 @@ const savedPose = async () => {
 
 test('with a canvas capture, an added photo still shows (and can be switched to)', async () => {
   await shortSession(true)
-  await expect(page.getByText('Canvas capture', { exact: true })).toBeVisible()
+  await expect(page.locator('figcaption', { hasText: /^Canvas capture$/ })).toBeVisible()
   await page.getByRole('button', { name: 'Add photo of this drawing' }).click()
   // Both images are offered, and the new photo is the one shown.
-  await expect(page.getByRole('radio', { name: 'Canvas capture' })).toBeVisible()
-  await expect(page.getByRole('radio', { name: 'Photo' })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('tab', { name: 'Canvas capture' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Photo' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('figcaption', { hasText: /^Photo$/ })).toBeVisible()
   await page.getByRole('radio', { name: 'Overlay' }).click()
   await expect(page.getByText('Drag your drawing to line it up')).toBeVisible()
+
+  // Rename: double-click the tab, type, Enter. The name is saved with the session.
+  await page.getByRole('tab', { name: 'Photo' }).dblclick()
+  await page.getByRole('textbox', { name: 'New name for Photo' }).fill('Sketchbook')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('tab', { name: 'Sketchbook' })).toBeVisible()
+
+  // Remove with the × on the tab; Undo brings it back.
+  await page.getByRole('tab', { name: 'Sketchbook' }).hover()
+  await page.getByRole('button', { name: 'Remove Sketchbook' }).click()
+  await expect(page.getByRole('tab', { name: 'Sketchbook' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Canvas capture' })).toHaveAttribute('aria-selected', 'true')
+  expect((await savedPose()).photos ?? []).toHaveLength(0)
+  await page.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.getByRole('tab', { name: 'Sketchbook' })).toBeVisible()
+  expect((await savedPose()).photos).toHaveLength(1)
+
   await page.getByRole('button', { name: 'Done' }).click()
   await page.getByRole('button', { name: 'Finish' }).click()
 })
@@ -92,16 +109,41 @@ test('with only a photo, side by side, overlay and the pen work', async () => {
   // Pen: M turns it on, a drag draws a mark, Ctrl+Z undoes it.
   await page.keyboard.press('m')
   await expect(page.getByRole('button', { name: 'Marking' })).toBeVisible()
-  const canvas = page.locator('canvas')
-  const box = (await canvas.boundingBox())!
-  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3)
-  await page.mouse.down()
-  await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5, { steps: 8 })
-  await page.mouse.up()
+  // The reference is the first canvas, your drawing the last.
+  const stroke = async (canvas: ReturnType<typeof page.locator>) => {
+    const box = (await canvas.boundingBox())!
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5, { steps: 8 })
+    await page.mouse.up()
+  }
+  await stroke(page.locator('canvas').last())
   const marked = await savedPose()
-  expect(Object.values(marked.marks ?? {})[0]).toHaveLength(1)
+  const photoPath = marked.photos![0]
+  expect(marked.marks?.[photoPath]).toHaveLength(1)
   await page.keyboard.press('Control+z')
-  expect(Object.values((await savedPose()).marks ?? {})[0]).toHaveLength(0)
+  expect((await savedPose()).marks?.[photoPath]).toHaveLength(0)
+
+  // The reference can be marked too.
+  await stroke(page.locator('canvas').first())
+  expect((await savedPose()).marks?.['@reference']).toHaveLength(1)
+
+  // Overlay: marks go on your drawing.
+  await page.getByRole('radio', { name: 'Overlay' }).click()
+  await expect(page.getByText(/Draw to mark/)).toBeVisible()
+  await stroke(page.locator('canvas').last())
+  expect((await savedPose()).marks?.[photoPath]).toHaveLength(1)
+  await page.getByRole('radio', { name: 'Side by side' }).click()
+
+  // One Clear for the reference and this drawing, with Undo.
+  await page.getByRole('button', { name: 'Clear marks' }).click()
+  let after = await savedPose()
+  expect(after.marks?.['@reference']).toHaveLength(0)
+  expect(after.marks?.[photoPath]).toHaveLength(0)
+  await page.getByRole('button', { name: 'Undo', exact: true }).last().click()
+  after = await savedPose()
+  expect(after.marks?.['@reference']).toHaveLength(1)
+  expect(after.marks?.[photoPath]).toHaveLength(1)
 
   // With the pen off, the marks stay but dragging no longer draws.
   await page.keyboard.press('m')

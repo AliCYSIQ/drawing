@@ -103,9 +103,23 @@ export function App() {
       {toast && (
         <div
           role="status"
-          className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-md bg-raised px-4 py-2.5 text-ink shadow-[0_8px_30px_rgba(0,0,0,0.35)] ring-1 ring-line"
+          className={`fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-md bg-raised py-2.5 pl-4 text-ink shadow-[0_8px_30px_rgba(0,0,0,0.35)] ring-1 ring-line ${
+            toast.action ? 'pr-2' : 'pointer-events-none pr-4'
+          }`}
         >
           {toast.text}
+          {toast.action && (
+            <button
+              type="button"
+              onClick={() => {
+                toast.action!.run()
+                useApp.getState().dismissToast()
+              }}
+              className="h-7 rounded px-2.5 font-semibold text-blue hover:bg-line"
+            >
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
     </div>

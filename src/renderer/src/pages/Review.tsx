@@ -5,6 +5,7 @@ import { Compare, drawingSources, type DrawingSource } from '../components/Compa
 import { ArrowLeft, ArrowRight, Camera, Check, Redo } from '../components/Icons'
 import { Button, IconButton } from '../components/ui'
 import { formatDuration, formatSeconds } from '../lib/schedule'
+import { filesInUse, removeSource, renameSource } from '../lib/review'
 import { knownSkill } from '../lib/skills'
 import { mistakeSummary } from '../lib/stats'
 import { useApp } from '../store'
@@ -107,8 +108,29 @@ export function Review({ sessionId }: { sessionId: string }) {
     }))
   }
 
-  const setMarks = (path: string, strokes: Stroke[]) =>
-    updatePose(session.id, i, { marks: { ...pose.marks, [path]: strokes } })
+  const setMarks = (path: string, strokes: Stroke[]) => {
+    // Read the newest marks: an Undo from a toast can run after other changes.
+    const now = useApp.getState().sessions.find((x) => x.id === session.id)?.poses[i]
+    updatePose(session.id, i, { marks: { ...now?.marks, [path]: strokes } })
+  }
+
+  /** Remove a capture or photo; Undo brings it back, and the app's copy is only deleted once Undo is gone. */
+  const removeImage = (source: DrawingSource) => {
+    if (!source.kind) return
+    const index = i
+    const { session: next, undo } = removeSource(session, index, { kind: source.kind, path: source.path })
+    updateSession(session.id, () => next)
+    notify(source.kind === 'page' ? `${source.label} removed from this session.` : `${source.label} removed.`, {
+      label: 'Undo',
+      run: () => updateSession(session.id, undo)
+    })
+    setTimeout(() => {
+      const current = useApp.getState().sessions.find((x) => x.id === session.id)
+      if (!current || !filesInUse(current).has(source.path)) void window.api.deleteSessionFile(source.path)
+    }, 10_000)
+  }
+
+  const renameImage = (source: DrawingSource, name: string) => updateSession(session.id, (s) => renameSource(s, source.path, name))
 
   return (
     <div className="relative flex h-full flex-col">
@@ -189,11 +211,13 @@ export function Review({ sessionId }: { sessionId: string }) {
           key={i}
           referencePath={pose.imagePath}
           referenceFallback={pose.keptPath}
-          sources={drawingSources(pose, session.pagePhotos)}
+          sources={drawingSources(pose, session.pagePhotos, session.labels)}
           earlier={earlierTries(session, pose, original)}
           marks={pose.marks ?? {}}
           onMarks={setMarks}
           onAddPhotos={addPosePhotos}
+          onRemoveSource={removeImage}
+          onRenameSource={renameImage}
           emptyHint="Hold your page next to the screen and check the main line first, then proportions and tilt. Or add a photo to see them side by side."
         />
 

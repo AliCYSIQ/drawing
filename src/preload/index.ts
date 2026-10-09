@@ -28,6 +28,7 @@ const api: Api = {
   pathForFile: (file) => webUtils.getPathForFile(file),
   pickPhotos: () => ipcRenderer.invoke('library:pickPhotos'),
   keepPhoto: (sessionId, path) => ipcRenderer.invoke('library:keepPhoto', sessionId, path),
+  deleteSessionFile: (path) => ipcRenderer.invoke('library:deleteSessionFile', path),
 
   setFloat: (state) => ipcRenderer.invoke('float:set', state),
   onFloatChanged: (cb) => on('float:changed', cb),

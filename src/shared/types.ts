@@ -149,8 +149,9 @@ export interface PoseResult {
   /** Photos of this one drawing (paper), attached during review. */
   photos?: string[]
   /**
-   * Red correction marks, per drawing image (keyed by its path). Points are
-   * 0–1 across the image, so they stay put at any size and can still be undone.
+   * Red correction marks, per drawing image (keyed by its path; marks on the
+   * reference use the key "@reference"). Points are 0–1 across the image, so
+   * they stay put at any size and can still be undone.
    */
   marks?: Record<string, Stroke[]>
   /** v0.1 memory mode saved marks as a picture; still shown for old sessions. */
@@ -179,6 +180,10 @@ export interface SessionRecord {
   reviewed: boolean
   /** Photos of whole paper pages (several drawings each), attached during review. */
   pagePhotos: string[]
+  /** Your own names for captures and photos, by file path ("Page 1" → "Sketchbook p. 12"). */
+  labels?: Record<string, string>
+  /** Names of the collections when the session was drawn, for searching history after renames. */
+  boardNames?: string[]
   challenge?: { challengeId: string; level: number }
   redoOf?: string
 }

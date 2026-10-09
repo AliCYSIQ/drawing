@@ -2,7 +2,7 @@ import { nativeImage, net } from 'electron'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, extname, join } from 'node:path'
+import { dirname, extname, join, relative, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { FolderInfo, ImageRef, PinterestImport } from '@shared/types'
 import { fetchBoard, PINTEREST_UA, type PinImage } from './pinterest'
@@ -299,4 +299,18 @@ export async function thumbnail(path: string, size: number): Promise<string | nu
   await mkdir(dataDir('thumbs'), { recursive: true })
   await writeFile(out, img.toJPEG(82))
   return out
+}
+
+/**
+ * Delete a capture or review photo the app keeps (never a file outside the
+ * app's captures and photos folders). Returns whether a file was removed.
+ */
+export async function deleteSessionFile(path: string): Promise<boolean> {
+  const inside = [dataDir('captures'), dataDir('photos')].some((dir) => {
+    const rel = relative(dir, path)
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+  })
+  if (!inside) return false
+  await rm(path, { force: true })
+  return true
 }

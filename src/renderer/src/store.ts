@@ -54,6 +54,8 @@ export interface Run {
 export interface Toast {
   id: number
   text: string
+  /** A button on the toast, e.g. Undo. */
+  action?: { label: string; run: () => void }
 }
 
 interface State {
@@ -79,7 +81,9 @@ interface State {
 
   init(): Promise<void>
   go(view: View): void
-  notify(text: string): void
+  /** A short message; with `action`, it has a button (like Undo) and stays a little longer. */
+  notify(text: string, action?: Toast['action']): void
+  dismissToast(): void
   setBoards(fn: (b: Board[]) => Board[]): void
   setLibrary(fn: (l: LibraryMeta) => LibraryMeta): void
   updateBoard(id: string, patch: Partial<Board>): void
@@ -200,12 +204,19 @@ export const useApp = create<State>((set, get) => ({
     set({ view })
   },
 
-  notify(text) {
-    const toast = { id: Date.now(), text }
+  notify(text, action) {
+    const toast: Toast = { id: Date.now() + Math.random(), text, ...(action ? { action } : {}) }
     set({ toast })
-    setTimeout(() => {
-      if (get().toast?.id === toast.id) set({ toast: null })
-    }, 3200)
+    setTimeout(
+      () => {
+        if (get().toast?.id === toast.id) set({ toast: null })
+      },
+      action ? 7000 : 3200
+    )
+  },
+
+  dismissToast() {
+    set({ toast: null })
   },
 
   setBoards(fn) {

@@ -43,6 +43,8 @@ export interface Api {
   pickPhotos(): Promise<string[]>
   /** Copy a page photo into the data folder; returns the stored path. */
   keepPhoto(sessionId: string, path: string): Promise<string>
+  /** Delete a capture or review photo the app keeps (only files in its own folders). */
+  deleteSessionFile(path: string): Promise<boolean>
 
   setFloat(state: FloatState): Promise<void>
   onFloatChanged(cb: (state: FloatState) => void): () => void
