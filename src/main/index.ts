@@ -1,8 +1,10 @@
 import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, net, powerSaveBlocker, protocol, shell } from 'electron'
 import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { DEFAULT_FLOAT, type FloatState, type Hotkeys, type ImageRef, type Region, type StoreName } from '@shared/types'
+import type { ResetPart } from '@shared/reset'
 import { captureRegion, pickRegion } from './capture'
 import { attachFloat, boundsBeforeFloat, getFloat, setFloat, setHotkeys, setSessionActive } from './float'
 import {
@@ -24,6 +26,7 @@ import {
   thumbnail
 } from './library'
 import { log, logFile, recentLog } from './log'
+import { backupsDir, listBackups, resetData, restoreBackup, restoreZip, savesFrozen, unfreezeSaves } from './reset'
 import { dataDir, exportZip, load, save } from './store'
 import { migrateDataDir } from './migrate'
 import { attachUpdater, checkForUpdates, getUpdateStatus, installUpdate, releasesUrl } from './updater'
@@ -145,7 +148,8 @@ function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => R |
 
 function registerIpc(): void {
   handle('store:load', (name: StoreName) => load(name))
-  handle('store:save', (name: StoreName, data: unknown) => save(name, data))
+  // During a reset or restore the page's saves would write old data back.
+  handle('store:save', (name: StoreName, data: unknown) => (savesFrozen() ? undefined : save(name, data)))
 
   handle('library:pickFolder', async () => {
     const r = await dialog.showOpenDialog(main!, { properties: ['openDirectory'] })
@@ -215,6 +219,32 @@ function registerIpc(): void {
 
   handle('data:open', () => shell.openPath(dataDir()).then(() => undefined))
   handle('app:openLog', () => shell.openPath(logFile()).then(() => undefined))
+  handle('data:reset', async (parts: ResetPart[]) => {
+    const out = await resetData(parts)
+    reloadWithNewData()
+    return out
+  })
+  handle('data:backups', () => listBackups())
+  handle('data:restore', async (name: string) => {
+    const out = await restoreBackup(name)
+    if (!out.error) reloadWithNewData()
+    return out
+  })
+  handle('data:restoreZip', async () => {
+    const r = await dialog.showOpenDialog(main!, {
+      title: 'Restore a backup',
+      properties: ['openFile'],
+      filters: [{ name: 'Backup', extensions: ['zip'] }]
+    })
+    if (r.canceled || !r.filePaths[0]) return { cancelled: true }
+    const out = await restoreZip(r.filePaths[0])
+    if (!out.error) reloadWithNewData()
+    return out
+  })
+  handle('data:openBackups', async () => {
+    await mkdir(backupsDir(), { recursive: true })
+    await shell.openPath(backupsDir())
+  })
   handle('app:info', () => ({
     version: app.getVersion(),
     electron: process.versions.electron,
@@ -252,6 +282,17 @@ function registerIpc(): void {
     await exportZip(r.filePath)
     return r.filePath
   })
+}
+
+/** After a reset or restore: a normal window, and the page loads the new data. */
+function reloadWithNewData(): void {
+  if (!main || main.isDestroyed()) return unfreezeSaves()
+  setFloat({ ...DEFAULT_FLOAT, ...getFloat(), on: false, clickThrough: false })
+  setSessionActive(false)
+  keepAwake(false)
+  // Saves start again once the new page has loaded; the old one's pending saves are dropped.
+  main.webContents.once('did-finish-load', unfreezeSaves)
+  main.webContents.reload()
 }
 
 /** Log crashes of any part of the app; if the page itself crashed, bring it back in a normal window. */

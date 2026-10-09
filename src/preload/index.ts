@@ -51,6 +51,11 @@ const api: Api = {
 
   openDataFolder: () => ipcRenderer.invoke('data:open'),
   exportBackup: () => ipcRenderer.invoke('data:export'),
+  resetData: (parts) => ipcRenderer.invoke('data:reset', parts),
+  listBackups: () => ipcRenderer.invoke('data:backups'),
+  restoreBackup: (name) => ipcRenderer.invoke('data:restore', name),
+  restoreZip: () => ipcRenderer.invoke('data:restoreZip'),
+  openBackups: () => ipcRenderer.invoke('data:openBackups'),
 
   appInfo: () => ipcRenderer.invoke('app:info'),
   metrics: () => ipcRenderer.invoke('app:metrics'),

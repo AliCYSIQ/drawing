@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { DEFAULT_HOTKEYS, type FolderImport, type HotkeyAction, type Settings as SettingsT, type Skill } from '@shared/types'
 import { Diagnostics } from '../components/Diagnostics'
 import { Trash } from '../components/Icons'
+import { Backups, StartOver } from '../components/StartOver'
 import { UpdatesField } from '../components/UpdatesField'
 import { Button, Field, IconButton, PageHeader, Segmented, Toggle } from '../components/ui'
 import { findSkill, normalizeSkillName } from '../lib/skills'
@@ -209,6 +210,14 @@ export function Settings() {
               Save a backup (.zip)
             </Button>
           </div>
+        </Field>
+
+        <Field label="Backups" hint="Restoring puts a backup's data back; what it replaces is kept in a new backup, so a restore can be undone too.">
+          <Backups />
+        </Field>
+
+        <Field label="Start over" hint="Clear your history, library, skills, presets or settings, all or some. Nothing is erased: it moves into a backup you can restore.">
+          <StartOver />
         </Field>
 
         <Field label="Updates">

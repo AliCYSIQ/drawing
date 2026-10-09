@@ -10,6 +10,7 @@ import type {
   StoreName,
   UpdateStatus
 } from './types'
+import type { BackupInfo, ResetPart } from './reset'
 
 /** What the preload script exposes as `window.api`. */
 export interface Api {
@@ -72,6 +73,14 @@ export interface Api {
 
   openDataFolder(): Promise<void>
   exportBackup(): Promise<string | null>
+  /** Start over: what the parts hold moves into a backup, then the page reloads. */
+  resetData(parts: ResetPart[]): Promise<{ backup: string }>
+  listBackups(): Promise<BackupInfo[]>
+  /** Put a backup back (what it replaces is kept in a new backup); the page reloads. */
+  restoreBackup(name: string): Promise<{ error?: string }>
+  /** Pick a backup .zip and restore it. */
+  restoreZip(): Promise<{ error?: string; cancelled?: boolean }>
+  openBackups(): Promise<void>
 
   /** Version numbers and where the data lives. */
   appInfo(): Promise<AppInfo>
