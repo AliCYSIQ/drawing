@@ -1,33 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { thumbUrl } from '@shared/api'
-import { SUGGESTED_TAGS, type Board, type BoardKind, type Folder, type FolderInfo, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
-import { ArrowLeft, ArrowRight, Close, Folder as FolderIcon, Images, Link, Plus, Refresh, Star, Trash } from '../components/Icons'
+import { SUGGESTED_TAGS, type Board, type Folder, type FolderInfo, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
+import { DeleteDialog, FolderBrowser } from '../components/FolderBrowser'
+import { ArrowLeft, Close, Folder as FolderIcon, Images, Link, Plus, Refresh, Star, Trash } from '../components/Icons'
 import { ImportSheet, type ImportOptions } from '../components/ImportSheet'
 import { TagEditor } from '../components/TagEditor'
 import { Button, Empty, IconButton } from '../components/ui'
 import {
-  boardsIn,
   canMoveFolder,
-  childFolders,
-  deleteFolder,
+  deleteItems,
   descendantIds,
-  dropShortcuts,
-  folderCover,
-  folderItemCount,
   folderLabel,
-  folderPath,
   foldersWithShortcut,
   searchBoards,
-  shortcutsIn
+  type SortKey
 } from '../lib/library'
 import { uid, useApp } from '../store'
-
-const KIND_LABEL: Record<BoardKind, string> = {
-  folder: 'Linked folder',
-  files: 'Images',
-  pinterest: 'Pinterest',
-  collection: 'Collection'
-}
 
 const label = (t: string) => t[0].toUpperCase() + t.slice(1)
 
@@ -53,8 +41,10 @@ function BoardList({ folderId }: { folderId?: string }) {
   const folders = useApp((s) => s.library.folders)
   const setBoards = useApp((s) => s.setBoards)
   const setLibrary = useApp((s) => s.setLibrary)
+  const changeLibrary = useApp((s) => s.changeLibrary)
   const go = useApp((s) => s.go)
   const notify = useApp((s) => s.notify)
+  const sort = useApp((s) => s.settings.librarySort ?? 'name')
   const [query, setQuery] = useState('')
   const [tag, setTag] = useState<string>('all')
   const [favOnly, setFavOnly] = useState(false)
@@ -69,15 +59,17 @@ function BoardList({ folderId }: { folderId?: string }) {
   }, [])
 
   const folder = folders.find((f) => f.id === folderId)
-  const path = folderPath(folders, folderId)
   const used = useMemo(() => [...new Set(boards.flatMap((b) => b.tags))].sort(), [boards])
   const searching = query.trim() !== '' || tag !== 'all' || favOnly
-  const results = searching
-    ? searchBoards(boards, query).filter((b) => (tag === 'all' || b.tags.includes(tag)) && (!favOnly || b.favorite))
-    : []
-  const subfolders = childFolders(folders, folderId)
-  const here = boardsIn(boards, folderId)
-  const shortcuts = shortcutsIn(folders, boards, folderId)
+  const results = useMemo(() => {
+    if (!searching) return undefined
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+    return {
+      // Folders match by name (not by tag or favorite).
+      folders: tag === 'all' && !favOnly && words.length ? folders.filter((f) => words.every((w) => f.name.toLowerCase().includes(w))) : [],
+      boards: searchBoards(boards, query).filter((b) => (tag === 'all' || b.tags.includes(tag)) && (!favOnly || b.favorite))
+    }
+  }, [searching, query, tag, favOnly, folders, boards])
 
   const create = (b: Omit<Board, 'id' | 'createdAt' | 'tags'> & { tags?: string[] }) => {
     const board: Board = { tags: [], ...b, folderId, id: uid(), createdAt: Date.now() }
@@ -180,43 +172,16 @@ function BoardList({ folderId }: { folderId?: string }) {
   const updateFolder = (patch: Partial<Folder>) =>
     setLibrary((l) => ({ ...l, folders: l.folders.map((f) => (f.id === folderId ? { ...f, ...patch } : f)) }))
 
-  const removeFolder = () => {
+  const removeFolder = (mode: 'keep' | 'all') => {
     if (!folderId) return
-    const out = deleteFolder(folders, boards, folderId)
-    setBoards(() => out.boards)
-    setLibrary((l) => ({ ...l, folders: out.folders }))
-    notify('Folder deleted. What was inside moved up one level.')
+    setConfirmDelete(false)
+    changeLibrary('delete', (l) => deleteItems(l, [{ type: 'folder', id: folderId }], mode), `Deleted the folder “${folder?.name}”.`)
     go({ name: 'library', folderId: folder?.parentId })
   }
 
-  const removeShortcut = (boardId: string) =>
-    setLibrary((l) => ({
-      ...l,
-      folders: l.folders.map((f) => (f.id === folderId ? { ...f, shortcuts: f.shortcuts.filter((s) => s !== boardId) } : f))
-    }))
-
-  const empty = !subfolders.length && !here.length && !shortcuts.length
-
   return (
     <div className="page-wide">
-      {folder && (
-        <nav aria-label="Folder path" className="mb-3 flex flex-wrap items-center gap-1 text-muted">
-          <button type="button" onClick={() => go({ name: 'library' })} className="hover:text-ink">
-            Library
-          </button>
-          {path.slice(0, -1).map((f) => (
-            <span key={f.id} className="flex items-center gap-1">
-              <ArrowRight size={13} />
-              <button type="button" onClick={() => go({ name: 'library', folderId: f.id })} className="hover:text-ink">
-                {f.name}
-              </button>
-            </span>
-          ))}
-          <ArrowRight size={13} />
-        </nav>
-      )}
-
-      <div className="flex flex-wrap items-center gap-3 pb-5">
+      <div className="flex flex-wrap items-center gap-3 pb-4">
         {folder ? (
           <input
             aria-label="Folder name"
@@ -266,7 +231,7 @@ function BoardList({ folderId }: { folderId?: string }) {
       </div>
 
       {folder && (
-        <div className="-mt-2 mb-5 flex flex-wrap items-center gap-3 text-muted">
+        <div className="-mt-1 mb-5 flex flex-wrap items-center gap-3 text-muted">
           <label className="flex items-center gap-2">
             Inside
             <FolderSelect
@@ -278,27 +243,19 @@ function BoardList({ folderId }: { folderId?: string }) {
               exclude={folder.id}
             />
           </label>
-          {confirmDelete ? (
-            <span className="flex items-center gap-1">
-              <Button tone="danger" onClick={removeFolder}>
-                Delete folder (keep what’s inside)
-              </Button>
-              <Button tone="ghost" onClick={() => setConfirmDelete(false)}>
-                Keep it
-              </Button>
-            </span>
-          ) : (
-            <Button tone="ghost" onClick={() => setConfirmDelete(true)}>
-              <Trash size={16} /> Delete folder
-            </Button>
-          )}
+          <Button tone="ghost" onClick={() => setConfirmDelete(true)}>
+            <Trash size={16} /> Delete folder
+          </Button>
         </div>
+      )}
+      {confirmDelete && folderId && (
+        <DeleteDialog items={[{ type: 'folder', id: folderId }]} onCancel={() => setConfirmDelete(false)} onDelete={removeFolder} />
       )}
 
       {pinterestOpen && <PinterestForm folderId={folderId} onClose={() => setPinterestOpen(false)} />}
       {sheet && <ImportSheet info={sheet} onCancel={() => setSheet(null)} onImport={(o) => void importFolder(sheet, o)} />}
 
-      {boards.length > 0 && (
+      {(boards.length > 0 || folders.length > 0) && (
         <div className="mb-5 flex flex-wrap items-center gap-1.5">
           <input
             type="search"
@@ -335,136 +292,44 @@ function BoardList({ folderId }: { folderId?: string }) {
               ))}
             </div>
           )}
+          <label className="ml-auto flex items-center gap-2 text-[13px] text-muted">
+            Sort
+            <select
+              aria-label="Sort"
+              value={sort}
+              onChange={(e) => updateSettings({ librarySort: e.target.value as SortKey })}
+              className="h-8 rounded-md bg-surface px-2 text-ink outline-none ring-1 ring-line focus:ring-blue"
+            >
+              <option value="name">Name</option>
+              <option value="added">Newest first</option>
+              <option value="practiced">Last practiced</option>
+              <option value="size">Most images</option>
+            </select>
+          </label>
         </div>
       )}
 
-      {searching ? (
-        results.length ? (
-          <TileGrid>
-            {results.map((b) => (
-              <BoardTile key={b.id} board={b} where={folderLabel(folders, b.folderId) || 'Library'} />
-            ))}
-          </TileGrid>
-        ) : (
-          <Empty title="Nothing matches">Try another word, or clear the filters.</Empty>
-        )
-      ) : !boards.length && !folders.length ? (
+      {!boards.length && !folders.length ? (
         <Empty title="Your library is empty">
           Add a folder of reference photos, paste a Pinterest board link, or start a collection you fill by dragging images from
           your browser.
         </Empty>
-      ) : empty ? (
-        <Empty title="This folder is empty">
-          Add collections here with the buttons above, or open a collection and choose this folder under “Folder”.
-        </Empty>
       ) : (
-        <TileGrid>
-          {subfolders.map((f) => (
-            <FolderTile key={f.id} folder={f} />
-          ))}
-          {here.map((b) => (
-            <BoardTile key={b.id} board={b} />
-          ))}
-          {shortcuts.map((b) => (
-            <BoardTile key={`s-${b.id}`} board={b} shortcut onRemoveShortcut={() => removeShortcut(b.id)} />
-          ))}
-        </TileGrid>
+        <FolderBrowser
+          folderId={folderId}
+          results={results}
+          empty={
+            searching ? (
+              <Empty title="Nothing matches">Try another word, or clear the filters.</Empty>
+            ) : (
+              <Empty title="This folder is empty">
+                Drag collections onto this folder, use Move to… on them, or add new ones with the buttons above.
+              </Empty>
+            )
+          }
+        />
       )}
     </div>
-  )
-}
-
-function TileGrid({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-[repeat(auto-fill,minmax(clamp(240px,15vw,340px),1fr))] gap-5">{children}</div>
-}
-
-function BoardTile({
-  board,
-  shortcut,
-  where,
-  onRemoveShortcut
-}: {
-  board: Board
-  shortcut?: boolean
-  /** Folder label, shown in search results. */
-  where?: string
-  onRemoveShortcut?: () => void
-}) {
-  const go = useApp((s) => s.go)
-  const missing = useApp((s) => s.missing[board.id]?.length ?? 0)
-  return (
-    <div className="group relative">
-      <button
-        type="button"
-        aria-label={`${board.name}${shortcut ? ', shortcut' : ''}, ${board.images.length} images`}
-        onClick={() => go({ name: 'library', boardId: board.id })}
-        className="block w-full text-left"
-      >
-        <div className="relative">
-          <Mosaic images={board.images} />
-          {shortcut && (
-            <span title="Shortcut: this collection lives in another folder" className="absolute bottom-2 left-2 flex h-6 items-center gap-1 rounded-md bg-bg/85 px-1.5 text-[12px] text-ink">
-              <Link size={12} /> Shortcut
-            </span>
-          )}
-          {board.favorite && (
-            <span className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-bg/85 text-blue" title="Favorite">
-              <Star size={13} filled />
-            </span>
-          )}
-          {missing > 0 && (
-            <span className="absolute bottom-2 right-2 flex h-6 items-center rounded-md bg-bg/90 px-1.5 text-[12px] text-red">
-              {missing} missing
-            </span>
-          )}
-        </div>
-        <div className="mt-2 flex items-baseline gap-2">
-          <span className="min-w-0 flex-1 truncate font-semibold text-ink group-hover:text-blue">{board.name}</span>
-          <span className="tnum text-[12.5px] text-muted">{board.images.length}</span>
-        </div>
-        <div className="truncate text-[12.5px] text-muted">{[KIND_LABEL[board.kind], ...board.tags].join(', ')}</div>
-        {where && <div className="truncate text-[12.5px] text-muted">In {where}</div>}
-      </button>
-      {onRemoveShortcut && (
-        <button
-          type="button"
-          onClick={onRemoveShortcut}
-          title="Remove the shortcut (the collection stays where it lives)"
-          className="absolute right-2 top-2 hidden h-7 items-center rounded-md bg-bg/90 px-2 text-[12px] text-muted hover:text-ink group-hover:flex"
-        >
-          Remove shortcut
-        </button>
-      )}
-    </div>
-  )
-}
-
-function FolderTile({ folder }: { folder: Folder }) {
-  const go = useApp((s) => s.go)
-  const boards = useApp((s) => s.boards)
-  const folders = useApp((s) => s.library.folders)
-  const cover = folderCover(folders, boards, folder.id)
-  const count = folderItemCount(folders, boards, folder.id)
-  return (
-    <button
-      type="button"
-      aria-label={`${folder.name}, folder, ${count === 1 ? '1 item' : `${count} items`}`}
-      onClick={() => go({ name: 'library', folderId: folder.id })}
-      className="group text-left"
-    >
-      <div className="relative">
-        {/* A second edge behind the cover, so a folder reads as a stack, not a single collection. */}
-        <div className="absolute inset-x-3 -top-1.5 h-4 rounded-t-md bg-raised ring-1 ring-line" />
-        <div className="relative">
-          <Mosaic images={cover} />
-        </div>
-        <span className="absolute bottom-2 left-2 flex h-6 items-center gap-1 rounded-md bg-bg/85 px-1.5 text-[12px] text-ink">
-          <FolderIcon size={12} /> Folder
-        </span>
-      </div>
-      <div className="mt-2 truncate font-semibold text-ink group-hover:text-blue">{folder.name}</div>
-      <div className="text-[12.5px] text-muted">{count === 1 ? '1 item' : `${count} items`}</div>
-    </button>
   )
 }
 
@@ -499,48 +364,6 @@ function FolderSelect({
         </option>
       ))}
     </select>
-  )
-}
-
-/** A board cover that fits what the board holds: empty, one image, two side by side, or one large and two small. */
-function Mosaic({ images }: { images: ImageRef[] }) {
-  const [a, b, c] = images
-  const frame = 'aspect-[4/3] overflow-hidden rounded-md bg-surface ring-1 ring-line'
-  if (!a) {
-    return (
-      <div className={`${frame} flex items-center justify-center text-muted`}>
-        <Images size={28} />
-      </div>
-    )
-  }
-  if (!b) {
-    return (
-      <div className={frame}>
-        <Cover img={a} size={480} />
-      </div>
-    )
-  }
-  if (!c) {
-    return (
-      <div className={`${frame} grid grid-cols-2 gap-0.5`}>
-        <Cover img={a} />
-        <Cover img={b} />
-      </div>
-    )
-  }
-  return (
-    <div className={`${frame} grid grid-cols-[2fr_1fr] grid-rows-2 gap-0.5`}>
-      <Cover img={a} className="row-span-2" size={480} />
-      <Cover img={b} />
-      <Cover img={c} />
-    </div>
-  )
-}
-
-function Cover({ img, className = '', size = 240 }: { img: ImageRef; className?: string; size?: number }) {
-  // Most references are portrait figures: crop from the upper part so heads stay in the cover.
-  return (
-    <img src={thumbUrl(img.path, size)} alt="" loading="lazy" className={`h-full w-full object-cover object-[center_20%] ${className}`} />
   )
 }
 
@@ -649,7 +472,6 @@ function BoardDetail({ board }: { board: Board }) {
   const allBoards = useApp((s) => s.boards)
   const allTags = useMemo(() => tagSuggestions(allBoards), [allBoards])
   const updateBoard = useApp((s) => s.updateBoard)
-  const setBoards = useApp((s) => s.setBoards)
   const folders = useApp((s) => s.library.folders)
   const favoriteImages = useApp((s) => s.library.favoriteImages)
   const setLibrary = useApp((s) => s.setLibrary)
@@ -757,10 +579,9 @@ function BoardDetail({ board }: { board: Board }) {
     return () => window.removeEventListener('paste', onPaste)
   })
 
+  /** Deleted with Undo; images the app stored for it go at the next start. */
   const remove = () => {
-    setBoards((list) => list.filter((b) => b.id !== board.id))
-    setLibrary((l) => ({ ...l, folders: dropShortcuts(l.folders, board.id) }))
-    if (board.kind === 'pinterest' || board.kind === 'collection') void window.api.removeBoardFiles(board.id)
+    useApp.getState().changeLibrary('delete', (l) => deleteItems(l, [{ type: 'board', id: board.id }], 'keep'), `Deleted “${board.name}”.`)
     go({ name: 'library', folderId: board.folderId })
   }
 

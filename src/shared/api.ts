@@ -38,6 +38,8 @@ export interface Api {
   onPinterestProgress(cb: (p: PinterestProgress) => void): () => void
   /** Delete the files the app stored for a board (Pinterest cache, collection images). */
   removeBoardFiles(boardId: string): Promise<void>
+  /** Give a copied collection its own copy of the files the app keeps; returns its image list. */
+  duplicateBoardFiles(fromId: string, toId: string, images: ImageRef[]): Promise<ImageRef[]>
   /** Path of a dropped File, or '' when it isn't on disk. */
   pathForFile(file: File): string
   pickPhotos(): Promise<string[]>

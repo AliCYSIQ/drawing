@@ -186,3 +186,32 @@ export const Crop = (p: IconProps) => (
     <path d="M7 3v14h14M3 7h14v14" />
   </Icon>
 )
+export const Copy = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="8.5" y="8.5" width="11" height="11" rx="2" />
+    <path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" />
+  </Icon>
+)
+export const Move = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
+    <path d="M10 13.5h5.5M13 11l2.5 2.5L13 16" />
+  </Icon>
+)
+export const Shortcut = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 16c0-5 3-8 9-8" />
+    <path d="M13.5 4.5 17 8l-3.5 3.5" />
+  </Icon>
+)
+export const Search = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="11" cy="11" r="6" />
+    <path d="m20 20-4.2-4.2" />
+  </Icon>
+)
+export const Filter = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 6h16M7 12h10M10 18h4" />
+  </Icon>
+)

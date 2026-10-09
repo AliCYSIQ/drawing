@@ -21,6 +21,7 @@ import {
   type UpdateStatus
 } from '@shared/types'
 import { completeLevel } from './lib/challenges'
+import type { Item, Lib } from './lib/library'
 import { createMemory, type MemoryState } from './lib/memoryEngine'
 import { findSkill, normalizeSkillName, withoutSkill } from './lib/skills'
 import { activeMs, createEngine, type EngineState, type Slot } from './lib/sessionEngine'
@@ -77,6 +78,17 @@ interface State {
   /** Image ids per collection whose file can't be found (checked, not saved). */
   missing: Record<string, string[]>
   update: UpdateStatus
+  /** Library changes that Ctrl+Z (or a toast's Undo) can take back, newest last. */
+  libraryUndo: { label: string; boards: Board[]; folders: LibraryMeta['folders'] }[]
+  /** Cut or copied library items, waiting for Paste. */
+  clipboard: { op: 'cut' | 'copy'; items: Item[] } | null
+  setClipboard(c: State['clipboard']): void
+  /**
+   * Change collections and folders together, with Undo. `deletedBoards`:
+   * collections whose stored image files go at the next start.
+   */
+  changeLibrary(label: string, fn: (lib: Lib) => Lib & { deletedBoards?: string[] }, toast?: string): void
+  undoLibrary(): void
   checkMissing(): Promise<void>
 
   init(): Promise<void>
@@ -135,6 +147,8 @@ export const useApp = create<State>((set, get) => ({
   run: null,
   missing: {},
   update: { state: 'idle' },
+  libraryUndo: [],
+  clipboard: null,
   toast: null,
 
   async init() {
@@ -180,6 +194,13 @@ export const useApp = create<State>((set, get) => ({
         get().updateSettings({ float: { ...prev, ...keep } })
       }
     })
+    // Files of collections deleted last time (kept until now so Undo worked).
+    // Only when the collections list loaded, so a damaged file never deletes anything.
+    const pending = (library?.pendingDelete ?? []).filter((id) => !(boards ?? []).some((b) => b.id === id))
+    if (boards && library?.pendingDelete?.length) {
+      for (const id of pending) void api.removeBoardFiles(id)
+      set({ library: { ...get().library, pendingDelete: [] } })
+    }
     api.onFlush(() => void flushSaves().then(() => api.flushed()))
     api.onUpdateStatus((update) => set({ update }))
     set({ update: await api.updateStatus() })
@@ -217,6 +238,46 @@ export const useApp = create<State>((set, get) => ({
 
   dismissToast() {
     set({ toast: null })
+  },
+
+  setClipboard(clipboard) {
+    set({ clipboard })
+  },
+
+  changeLibrary(label, fn, toast) {
+    const { boards, library, libraryUndo } = get()
+    const out = fn({ boards, folders: library.folders })
+    if (out.boards === boards && out.folders === library.folders) return
+    const gone = out.deletedBoards ?? []
+    set({
+      boards: out.boards,
+      library: {
+        ...library,
+        folders: out.folders,
+        ...(gone.length ? { pendingDelete: [...new Set([...(library.pendingDelete ?? []), ...gone])] } : {})
+      },
+      libraryUndo: [...libraryUndo.slice(-19), { label, boards, folders: library.folders }]
+    })
+    if (toast) get().notify(toast, { label: 'Undo', run: () => get().undoLibrary() })
+  },
+
+  undoLibrary() {
+    const { libraryUndo, boards, library } = get()
+    const last = libraryUndo[libraryUndo.length - 1]
+    if (!last) return
+    // Collections the undo removes (copies) have their stored files cleaned up later.
+    const kept = new Set(last.boards.map((b) => b.id))
+    const dropped = boards.filter((b) => !kept.has(b.id)).map((b) => b.id)
+    set({
+      boards: last.boards,
+      library: {
+        ...library,
+        folders: last.folders,
+        ...(dropped.length ? { pendingDelete: [...new Set([...(library.pendingDelete ?? []), ...dropped])] } : {})
+      },
+      libraryUndo: libraryUndo.slice(0, -1)
+    })
+    get().notify(`Undone: ${last.label}.`)
   },
 
   setBoards(fn) {

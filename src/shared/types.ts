@@ -62,6 +62,11 @@ export interface LibraryMeta {
   folders: Folder[]
   /** Image ids marked as favorites, across all collections. */
   favoriteImages: string[]
+  /**
+   * Deleted collections whose image files (pasted, Pinterest) are removed at
+   * the next start, so Undo works until then.
+   */
+  pendingDelete?: string[]
 }
 
 export const EMPTY_LIBRARY: LibraryMeta = { folders: [], favoriteImages: [] }
@@ -95,6 +100,8 @@ export interface Skill {
 
 export interface SessionPlan {
   boardIds: string[]
+  /** Whole library folders: everything inside them, including collections added later. */
+  folderIds?: string[]
   /** The skill this session practices; none = not tagged. Review can change it afterwards. */
   skillId?: string
   mode: SessionMode
@@ -204,6 +211,8 @@ export interface Challenge {
   kind: 'ladder' | 'custom'
   ladder?: LadderKind
   boardIds: string[]
+  /** Whole library folders, like a session plan's. */
+  folderIds?: string[]
   /** Every level's session counts toward this skill. */
   skillId?: string
   levels: Level[]
@@ -272,6 +281,8 @@ export interface Settings {
   captureRegion?: Region
   float: FloatState
   lastPlan?: SessionPlan
+  /** Library order: folders first, then by this. */
+  librarySort?: 'name' | 'added' | 'practiced' | 'size'
 }
 
 export const DEFAULT_HOTKEYS: Hotkeys = {

@@ -6,6 +6,7 @@ import { SkillPicker } from '../components/SkillPicker'
 import { ArrowLeft, Check, Lock, Plus, Trash } from '../components/Icons'
 import { Button, Empty, Field, IconButton, NumberField, PageHeader } from '../components/ui'
 import { currentLevel, isUnlocked, LADDERS, makeLadder, newLevel } from '../lib/challenges'
+import { resolveBoardIds } from '../lib/library'
 import { describeBlocks, estimateSeconds, formatDuration, poolFromBoards, slotsForLevel } from '../lib/schedule'
 import { availablePool, uid, useApp } from '../store'
 import { BlocksEditor } from './Practice'
@@ -22,16 +23,18 @@ function ChallengeList() {
   const go = useApp((s) => s.go)
   const [making, setMaking] = useState<LadderKind | 'custom' | null>(null)
   const [boardIds, setBoardIds] = useState<string[]>(() => boards.slice(0, 1).map((b) => b.id))
+  const [folderIds, setFolderIds] = useState<string[]>([])
   const [skillId, setSkillId] = useState<string | undefined>()
   const skills = useApp((s) => s.skills)
 
   const create = () => {
-    if (!making || !boardIds.length) return
+    if (!making || (!boardIds.length && !folderIds.length)) return
     const id = uid()
-    const ch: Challenge =
+    const made: Challenge =
       making === 'custom'
         ? { id, name: 'My challenge', kind: 'custom', boardIds, levels: [newLevel(1)], completed: [], createdAt: Date.now() }
         : makeLadder(id, making, boardIds, Date.now())
+    const ch: Challenge = folderIds.length ? { ...made, folderIds } : made
     setChallenges((list) => [...list, skillId ? { ...ch, skillId } : ch])
     setMaking(null)
     go({ name: 'challenges', challengeId: id })
@@ -72,11 +75,18 @@ function ChallengeList() {
       {making && (
         <div className="mt-4 rounded-lg bg-surface p-4 ring-1 ring-line">
           <div className="pb-3 font-semibold">Which boards should it use?</div>
-          <BoardPicker value={boardIds} onChange={setBoardIds} />
+          <BoardPicker
+            value={boardIds}
+            folderIds={folderIds}
+            onChange={(b, f) => {
+              setBoardIds(b)
+              setFolderIds(f)
+            }}
+          />
           <div className="pb-2 pt-4 font-semibold">Skill it counts toward (optional)</div>
           <SkillPicker value={skillId} onChange={setSkillId} />
           <div className="mt-4 flex gap-2">
-            <Button tone="primary" disabled={!boardIds.length} onClick={create}>
+            <Button tone="primary" disabled={!boardIds.length && !folderIds.length} onClick={create}>
               Create challenge
             </Button>
             <Button tone="ghost" onClick={() => setMaking(null)}>
@@ -150,10 +160,12 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
 
   const level = challenge.levels[Math.min(selected, challenge.levels.length - 1)]
   const missing = useApp((s) => s.missing)
-  const pool = useMemo(
-    () => availablePool({ boards, missing }, poolFromBoards(boards, challenge.boardIds)),
-    [boards, missing, challenge.boardIds]
+  const folders = useApp((s) => s.library.folders)
+  const boardIds = useMemo(
+    () => resolveBoardIds({ boards, folders }, challenge.boardIds, challenge.folderIds),
+    [boards, folders, challenge.boardIds, challenge.folderIds]
   )
+  const pool = useMemo(() => availablePool({ boards, missing }, poolFromBoards(boards, boardIds)), [boards, missing, boardIds])
   const unlocked = isUnlocked(challenge, selected)
   const attempts = sessions
     .filter((s) => s.challenge?.challengeId === challenge.id && s.challenge.level === selected)
@@ -167,6 +179,7 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
         ...DEFAULT_PLAN,
         ...settings.lastPlan,
         boardIds: challenge.boardIds,
+        folderIds: challenge.folderIds,
         mode: 'class',
         blocks: level.blocks,
         shuffle: true,
@@ -337,7 +350,7 @@ function Editor({ challenge, update }: { challenge: Challenge; update: (p: Parti
   return (
     <div className="max-w-3xl">
       <Field label="Boards">
-        <BoardPicker value={challenge.boardIds} onChange={(boardIds) => update({ boardIds })} />
+        <BoardPicker value={challenge.boardIds} folderIds={challenge.folderIds} onChange={(boardIds, folderIds) => update({ boardIds, folderIds })} />
       </Field>
       <Field label="Skill" hint="Every level's session counts toward this skill in Stats.">
         <SkillPicker value={challenge.skillId} onChange={(skillId) => update({ skillId })} />

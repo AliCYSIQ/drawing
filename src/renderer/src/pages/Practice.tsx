@@ -14,6 +14,7 @@ import {
   recentlySeen,
   slotsForPlan
 } from '../lib/schedule'
+import { resolveBoardIds } from '../lib/library'
 import { currentStreak, dayKey, minutesByDay, recentMistakes } from '../lib/stats'
 import { availablePool, initialPlan, uid, useApp } from '../store'
 
@@ -31,17 +32,21 @@ export function Practice() {
   const startRun = useApp((s) => s.startRun)
   const notify = useApp((s) => s.notify)
 
+  const folders = useApp((s) => s.library.folders)
   const [plan, setPlanState] = useState<SessionPlan>(() => {
     const p = initialPlan(settings)
     const known = p.boardIds.filter((id) => boards.some((b) => b.id === id))
-    return { ...p, boardIds: known.length ? known : boards.slice(0, 1).map((b) => b.id) }
+    const knownFolders = (p.folderIds ?? []).filter((id) => folders.some((f) => f.id === id))
+    return { ...p, boardIds: known.length || knownFolders.length ? known : boards.slice(0, 1).map((b) => b.id), folderIds: knownFolders }
   })
   const [presetName, setPresetName] = useState<string | null>(null)
   const setPlan = (patch: Partial<SessionPlan>) => setPlanState((p) => ({ ...p, ...patch }))
 
   const missing = useApp((s) => s.missing)
   const favoriteImages = useApp((s) => s.library.favoriteImages)
-  const allImages = useMemo(() => poolFromBoards(boards, plan.boardIds), [boards, plan.boardIds])
+  // Picked collections plus everything in picked folders.
+  const boardIds = useMemo(() => resolveBoardIds({ boards, folders }, plan.boardIds, plan.folderIds), [boards, folders, plan.boardIds, plan.folderIds])
+  const allImages = useMemo(() => poolFromBoards(boards, boardIds), [boards, boardIds])
   // Images whose file is gone are skipped.
   const available = useMemo(() => availablePool({ boards, missing }, allImages), [boards, missing, allImages])
   const skipped = allImages.length - available.length
@@ -86,7 +91,7 @@ export function Practice() {
     <div className="page-form grid grid-cols-[minmax(0,1fr)_clamp(300px,24vw,380px)] gap-10">
       <section aria-label="Session setup" className="min-w-0">
         <h1 className="pb-4 text-[22px] font-semibold tracking-[-0.01em]">What do you want to draw?</h1>
-        <BoardPicker value={plan.boardIds} onChange={(boardIds) => setPlan({ boardIds })} />
+        <BoardPicker value={plan.boardIds} folderIds={plan.folderIds} onChange={(boardIds, folderIds) => setPlan({ boardIds, folderIds })} />
 
         <div className="mt-6 divide-y divide-line border-t border-line">
           <Field label="Mode" hint={modeHint(plan.mode)}>
@@ -254,7 +259,8 @@ export function Practice() {
                     className="h-8 pl-3 pr-1.5 text-[13px] text-ink hover:text-blue"
                     onClick={() => {
                       const known = p.plan.boardIds.filter((id) => boards.some((b) => b.id === id))
-                      setPlanState({ ...DEFAULT_PLAN, ...p.plan, boardIds: known })
+                      const knownFolders = (p.plan.folderIds ?? []).filter((id) => folders.some((f) => f.id === id))
+                      setPlanState({ ...DEFAULT_PLAN, ...p.plan, boardIds: known, folderIds: knownFolders })
                     }}
                   >
                     {p.name}
@@ -321,7 +327,7 @@ export function Practice() {
             <p className="mt-2.5 text-[12.5px] text-muted">
               {plan.favoritesOnly && available.length
                 ? 'No favorites in these boards. Star images in the Library, or turn off Favorites only.'
-                : 'Pick at least one board with images.'}
+                : 'Pick at least one collection or folder with images.'}
             </p>
           )}
           {missingHere > 0 && (

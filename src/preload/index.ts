@@ -25,6 +25,7 @@ const api: Api = {
   importPinterest: (boardId, url) => ipcRenderer.invoke('library:importPinterest', boardId, url),
   onPinterestProgress: (cb) => on('pinterest:progress', cb),
   removeBoardFiles: (boardId) => ipcRenderer.invoke('library:removeBoardFiles', boardId),
+  duplicateBoardFiles: (fromId, toId, images) => ipcRenderer.invoke('library:duplicateBoardFiles', fromId, toId, images),
   pathForFile: (file) => webUtils.getPathForFile(file),
   pickPhotos: () => ipcRenderer.invoke('library:pickPhotos'),
   keepPhoto: (sessionId, path) => ipcRenderer.invoke('library:keepPhoto', sessionId, path),
