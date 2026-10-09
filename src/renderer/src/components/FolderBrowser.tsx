@@ -165,10 +165,14 @@ export function FolderBrowser({
     }
   }
 
-  const transfer = (op: Transfer, list: Item[], target: string | undefined) => {
+  /** Returns whether anything moved, was copied or got a shortcut. */
+  const transfer = (op: Transfer, list: Item[], target: string | undefined): boolean => {
     const lib = { boards: useApp.getState().boards, folders: useApp.getState().library.folders }
     const can = list.filter((it) => !cannotTransfer(lib, it, target, op))
-    if (!can.length) return notify(cannotTransfer(lib, list[0], target, op) ?? 'Nothing to do.')
+    if (!can.length) {
+      notify(cannotTransfer(lib, list[0], target, op) ?? 'Nothing to do.')
+      return false
+    }
     if (op === 'move') {
       changeLibrary('move', (l) => moveItems(l, can, target), `Moved ${describe(can)} to ${placeName(target)}.`)
     } else if (op === 'shortcut') {
@@ -187,6 +191,7 @@ export function FolderBrowser({
       void copyFiles(files)
     }
     setSelected([])
+    return true
   }
 
   const remove = (list: Item[]) => {
@@ -228,8 +233,9 @@ export function FolderBrowser({
       i.type === 'folder' ? lib.library.folders.some((f) => f.id === i.id) : lib.boards.some((b) => b.id === i.id)
     )
     if (!still.length) return setClipboard(null)
-    transfer(asShortcut ? 'shortcut' : clipboard.op === 'cut' ? 'move' : 'copy', still, folderId)
-    if (clipboard.op === 'cut' && !asShortcut) setClipboard(null)
+    const done = transfer(asShortcut ? 'shortcut' : clipboard.op === 'cut' ? 'move' : 'copy', still, folderId)
+    // Cut items are pasted once; if they couldn't go here, they stay cut.
+    if (done && clipboard.op === 'cut' && !asShortcut) setClipboard(null)
   }
 
   const toggle = (key: string) => {
@@ -352,13 +358,18 @@ export function FolderBrowser({
       setIsDragging(false)
       setDrop(null)
     }
+    // No mouse moves arrive during a drag, so the first one means it ended
+    // (also when the tile it started from is gone because a folder opened).
+    const moved = () => dragging && end()
     window.addEventListener('dragend', end)
     window.addEventListener('drop', end)
+    window.addEventListener('mousemove', moved)
     // A folder opened mid-drag: this view is new, the drag goes on.
     if (dragging) setIsDragging(true)
     return () => {
       window.removeEventListener('dragend', end)
       window.removeEventListener('drop', end)
+      window.removeEventListener('mousemove', moved)
     }
   }, [])
 

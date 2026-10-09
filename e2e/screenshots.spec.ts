@@ -114,7 +114,7 @@ test('screens', async () => {
   await page.keyboard.press('Enter')
   await page.waitForTimeout(500)
   await page.waitForTimeout(1500)
-  const canvas = page.locator('canvas')
+  const canvas = page.locator('canvas').last()
   const box = await canvas.boundingBox()
   if (box) {
     // Circle a spot in red, like marking a mistake.

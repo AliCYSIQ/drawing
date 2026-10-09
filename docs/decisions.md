@@ -2,6 +2,66 @@
 
 Why the app works the way it does. Newest first.
 
+## 2026-10-09: v0.2.5 decisions
+
+**Click-through lag and crashes.** Three causes in the float code, fixed:
+- **The mouse hook:** click-through used `setIgnoreMouseEvents(true, { forward: true })`. On Windows, forwarding installs a system-wide low-level mouse hook that runs on the app's main thread, so every mouse move on the PC waited for the app. The float controls never show during click-through, so forwarding was dropped.
+- **Hotkeys:** every float change unregistered and re-registered all hotkeys, even from inside the `Ctrl+Alt+L` handler itself. Now only changed hotkeys are touched, and hotkey actions run after their handler returns.
+- **Window settings:** every change re-applied all of them (frame style, layered window, on top), and the opacity slider did this on every step. Now only what changed is applied, the slider sends at most one change per frame, and opacity is never set while it's 100%.
+
+Also:
+- Sessions redraw once a second; the progress line is animated by the browser.
+- Review strokes are saved when the pen lifts.
+- A crash, hang and slow-work log (`data/logs/app.log`) and Settings → Diagnostics, so the next problem comes with facts.
+
+**Updates.** electron-updater with GitHub Releases, which suits the NSIS installer the app already uses.
+- It checks after start, downloads in the background, and installs on Restart or when the app closes, never during a session.
+- The app isn't signed, so the updater can't check a publisher. It still checks every download against the checksum in `latest.yml`.
+- A private code repository would need a token inside the app. Instead, releases can go to a public releases-only repository (`docs/releasing.md`).
+
+**Library folders: the Windows model.** Six options were weighed:
+- tags only
+- flat folders
+- a strict tree
+- a tree with shortcuts
+- items in many folders at once (labels)
+- smart folders
+
+The app already had a tree with shortcuts (one home per collection, shortcuts elsewhere), which is what people know from Windows Explorer. So that model stays, and the work went into behaving like Explorer:
+- selection
+- drag to move (Ctrl copies, Alt makes a shortcut)
+- cut, copy and paste
+- right-click menus
+- F2, Delete, Undo
+
+Rules:
+- **Copy** makes an independent collection. Pasted and Pinterest images get their own files, so the original can be deleted or re-synced.
+- **Copying a shortcut** makes another shortcut.
+- **Deleting a folder** asks: keep what's inside (it moves up) or delete it all.
+- **Stored images of deleted collections** are removed at the next start, so Undo always works until then.
+- **Folder tiles** are drawn as folders (tab, images standing in it, front flap), so a folder never looks like a collection.
+- **Labels** (one item in many folders) were not chosen: "where does it really live?" and "does delete remove it everywhere?" have no clear answer.
+- **Smart folders** may come later.
+
+**Practicing a folder.** Practice and Challenges browse the same folders. Ticking a folder practices everything in it, including collections added later (`folderIds` on the plan). No data migration was needed.
+
+**Review.** Pages (whole-session photos) and photos (one drawing) keep their roles.
+- **Remove and rename:** both can be removed (× on the tab) and renamed (double-click or F2). Names are stored by file path in the session (`labels`).
+- **Undo:** removing can be undone; the app's copy of the file is deleted only after that.
+- **Marking:** the reference can be marked too, and marking works in overlay, on your drawing.
+- **One Undo and one Clear:** Clear covers the reference and the shown drawing, with Undo. Marking is meant to be quick, so there are no per-pane controls.
+
+**History** is its own tab. As sessions add up it needs search and filters:
+- notes, mistakes, collections, challenges
+- date, kind, review state, skill
+- whether a session has notes, drawings, marks or flagged poses
+
+Sessions now store their collection names, so renamed collections still match. A heatmap day opens History for that day.
+
+**Shuffle with fresh images first.** It already worked as asked: shuffle, then move fresh images to the front. Images drawn this week now follow, the one drawn longest ago first. There is no separate "exclude recent" option: small boards would run out.
+
+**Start over never erases.** What it clears moves into `data/backups/<date>-before-reset`, which Settings → Backups can restore. Restoring moves what it replaces into another backup.
+
 ## 2026-10-09: v0.2 decisions
 
 **Wide and maximized windows.** Galleries fill the window, up to about 2200 px, and the number of columns adapts. Forms stay a readable width and are centered: Practice up to 1440 px, Settings 860 px. An **Interface size** setting (Ctrl `+` / `-` / `0`) fixes small text on big monitors. This follows Microsoft's responsive guidance (reposition, resize, reflow) and the common pattern of a capped width for forms and full width for grids.

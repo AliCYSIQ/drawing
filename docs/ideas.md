@@ -11,12 +11,18 @@ Things worth doing someday, kept here so they don't get lost. None of them are b
 
 ## Library
 - **SQLite instead of JSON files.** JSON is fine at today's size. Switch if the library grows past roughly 10,000 images or search gets slow. All storage goes through `src/main/store.ts`, so the change stays in one place.
-- Search inside history: by date, note text or mistake.
+- **Sessions in more than one file.** `sessions.json` holds every session and is rewritten after each change. Split it (for example per month) if it passes a few MB.
+- **Smart folders:** saved searches (a tag, favorites, not practiced lately) that show in the library like folders.
+- Drag a box around tiles to select them.
 - Weighted random (practice weak areas more often), and repeatable sessions from a seed.
-- Restore from a backup zip inside the app. Saving a backup already exists.
+
+## Performance
+- If the app log shows slow work on the main thread (canvas capture, history copies), move image encoding to a background process (Electron's `utilityProcess`).
 
 ## Review
 - A confidence or difficulty rating per pose (for example 1–3).
+- Remember how a drawing was lined up in overlay, per pose.
+- Reorder page photos by dragging their tabs.
 - A high-contrast theme.
 
 ## Bigger ideas
