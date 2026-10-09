@@ -32,13 +32,24 @@ export function shuffled<T>(list: T[], rng: Rng = Math.random): T[] {
  * Pick `n` images (0 = all of them once). No image repeats until the whole
  * pool has been used; when a session needs more images than the pool holds,
  * it starts a new round without putting the same image twice in a row.
+ * Images in `seenRecently` go to the end of the first round, so fresh ones
+ * come first.
  */
-export function pickImages(pool: ImageRef[], n: number, shuffle: boolean, rng: Rng = Math.random): ImageRef[] {
+export function pickImages(
+  pool: ImageRef[],
+  n: number,
+  shuffle: boolean,
+  rng: Rng = Math.random,
+  seenRecently?: Set<string>
+): ImageRef[] {
   if (!pool.length) return []
   const want = n > 0 ? n : pool.length
   const out: ImageRef[] = []
   while (out.length < want) {
     let round = shuffle ? shuffled(pool, rng) : pool.slice()
+    if (!out.length && seenRecently?.size) {
+      round = [...round.filter((i) => !seenRecently.has(i.id)), ...round.filter((i) => seenRecently.has(i.id))]
+    }
     const prev = out[out.length - 1]
     if (prev && round.length > 1 && round[0].id === prev.id) {
       round = [...round.slice(1), round[0]]
@@ -60,23 +71,51 @@ export function estimateMemorySeconds(refs: number, m: { studySeconds: number; d
   return refs * (m.studySeconds + m.drawSeconds * m.attempts)
 }
 
-export function slotsFromBlocks(blocks: Block[], pool: ImageRef[], shuffle: boolean, rng: Rng = Math.random): Slot[] {
+export interface SlotOptions {
+  /** Rest after the last pose of each block (not after the final one); 0 = the usual rest. */
+  blockRest?: number
+  seenRecently?: Set<string>
+}
+
+export function slotsFromBlocks(
+  blocks: Block[],
+  pool: ImageRef[],
+  shuffle: boolean,
+  rng: Rng = Math.random,
+  opts: SlotOptions = {}
+): Slot[] {
   const total = blocks.reduce((a, b) => a + b.count, 0)
-  const images = pickImages(pool, total, shuffle, rng)
+  const images = pickImages(pool, total, shuffle, rng, opts.seenRecently)
   if (!images.length) return []
   const slots: Slot[] = []
   let i = 0
-  for (const block of blocks) {
+  blocks.forEach((block, b) => {
     for (let k = 0; k < block.count; k++, i++) {
       const img = images[i]
-      slots.push({ imageId: img.id, imagePath: img.path, seconds: block.seconds })
+      const endOfBlock = k === block.count - 1 && b < blocks.length - 1
+      slots.push({
+        imageId: img.id,
+        imagePath: img.path,
+        seconds: block.seconds,
+        ...(endOfBlock && opts.blockRest ? { restAfter: opts.blockRest } : {})
+      })
     }
-  }
+  })
   return slots
 }
 
-export function slotsForPlan(plan: SessionPlan, pool: ImageRef[], rng: Rng = Math.random): Slot[] {
-  return slotsFromBlocks(planBlocks(plan, pool.length), pool, plan.shuffle, rng)
+export function slotsForPlan(plan: SessionPlan, pool: ImageRef[], rng: Rng = Math.random, seenRecently?: Set<string>): Slot[] {
+  const blockRest = plan.mode === 'class' ? (plan.blockRest ?? 0) : 0
+  return slotsFromBlocks(planBlocks(plan, pool.length), pool, plan.shuffle, rng, {
+    blockRest,
+    seenRecently: plan.freshFirst === false ? undefined : seenRecently
+  })
+}
+
+/** Image ids drawn in sessions during the last `days` days. */
+export function recentlySeen(sessions: { startedAt: number; poses: { imageId: string }[] }[], now: number, days = 7): Set<string> {
+  const since = now - days * 86_400_000
+  return new Set(sessions.filter((s) => s.startedAt >= since).flatMap((s) => s.poses.map((p) => p.imageId)))
 }
 
 export function slotsForLevel(level: Level, pool: ImageRef[], rng: Rng = Math.random): Slot[] {
@@ -84,10 +123,11 @@ export function slotsForLevel(level: Level, pool: ImageRef[], rng: Rng = Math.ra
 }
 
 /** Estimated session length in seconds (untimed poses count as 0). */
-export function estimateSeconds(blocks: Block[], restSeconds: number): number {
+export function estimateSeconds(blocks: Block[], restSeconds: number, blockRest = 0): number {
   const poses = blocks.reduce((a, b) => a + b.count, 0)
   const drawing = blocks.reduce((a, b) => a + b.count * b.seconds, 0)
-  return drawing + Math.max(0, poses - 1) * restSeconds
+  const breaks = blockRest ? Math.max(0, blocks.length - 1) : 0
+  return drawing + (Math.max(0, poses - 1) - breaks) * restSeconds + breaks * blockRest
 }
 
 export function formatDuration(totalSeconds: number): string {

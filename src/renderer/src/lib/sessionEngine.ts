@@ -9,6 +9,8 @@ export interface Slot {
   fallbackPath?: string
   /** 0 = untimed. */
   seconds: number
+  /** Rest after this pose, overriding the session rest (e.g. a longer break between class blocks). */
+  restAfter?: number
 }
 
 export type Phase = 'pose' | 'rest' | 'done'
@@ -56,7 +58,7 @@ export function createEngine(slots: Slot[], restSeconds: number, now: number): E
 /** Length of the current phase in ms; 0 = untimed. */
 export function phaseDuration(s: EngineState): number {
   if (s.phase === 'pose') return s.slots[s.index].seconds * 1000
-  if (s.phase === 'rest') return s.restSeconds * 1000
+  if (s.phase === 'rest') return restAfter(s) * 1000
   return 0
 }
 
@@ -138,6 +140,13 @@ export function back(s: EngineState, now: number): Step {
   }
 }
 
+/** Start the current pose's timer again (the time already spent still counts). */
+export function restart(s: EngineState, now: number): EngineState {
+  if (s.phase !== 'pose') return s
+  const spent = withValue(s.spent, s.index, s.spent[s.index] + elapsed(s, now))
+  return { ...s, spent, phaseStart: now, carried: 0 }
+}
+
 /** End the session now. */
 export function stop(s: EngineState, now: number): Step {
   const events: EngineEvent[] = []
@@ -169,8 +178,13 @@ function endPose(
     events.push({ type: 'done', finished: true })
     return { ...s, spent, skipped, phase: 'done' }
   }
-  if (s.restSeconds > 0) return { ...s, spent, skipped, phase: 'rest' }
+  if (restAfter(s) > 0) return { ...s, spent, skipped, phase: 'rest' }
   return { ...s, spent, skipped, phase: 'pose', index: s.index + 1 }
+}
+
+/** Seconds of rest after the current pose. */
+function restAfter(s: EngineState): number {
+  return s.slots[s.index]?.restAfter ?? s.restSeconds
 }
 
 function afterRest(s: EngineState): EngineState {

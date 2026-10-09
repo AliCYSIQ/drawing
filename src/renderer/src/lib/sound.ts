@@ -18,9 +18,10 @@ function tone(freq: number, start: number, duration: number, gain = 0.12): void 
 }
 
 /** End of a pose: one soft bell. End of the session: a rising pair. */
-export function chime(kind: 'pose' | 'done' | 'rest'): void {
+export function chime(kind: 'pose' | 'done' | 'rest' | 'tick'): void {
   try {
-    if (kind === 'pose') tone(880, 0, 0.5)
+    if (kind === 'tick') tone(1200, 0, 0.06, 0.05)
+    else if (kind === 'pose') tone(880, 0, 0.5)
     else if (kind === 'rest') tone(660, 0, 0.35, 0.08)
     else {
       tone(660, 0, 0.4)
