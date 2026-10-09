@@ -22,7 +22,7 @@ function useCellSize(): [React.RefObject<HTMLDivElement | null>, number] {
   return [ref, cell]
 }
 
-export function Heatmap({ sessions, end }: { sessions: SessionRecord[]; end?: Date }) {
+export function Heatmap({ sessions, end, onDay }: { sessions: SessionRecord[]; end?: Date; onDay?: (day: string) => void }) {
   const today = dayKey(end ?? new Date())
   // Recomputed when sessions change or the day rolls over, not on every render.
   const grid = useMemo(() => yearGrid(minutesByDay(sessions), end ?? new Date(), WEEKS), [sessions, today])
@@ -59,6 +59,8 @@ export function Heatmap({ sessions, end }: { sessions: SessionRecord[]; end?: Da
                 height={CELL}
                 rx={3}
                 fill={`var(--heat-${cell.level})`}
+                className={onDay && cell.minutes ? 'cursor-pointer hover:stroke-[var(--ink)]' : undefined}
+                onClick={onDay && cell.minutes ? () => onDay(cell.key) : undefined}
               >
                 <title>
                   {cell.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}:{' '}

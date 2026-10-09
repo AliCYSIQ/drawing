@@ -1,10 +1,8 @@
 import { useMemo, useState } from 'react'
-import { thumbUrl } from '@shared/api'
-import type { SessionRecord } from '@shared/types'
 import { Heatmap } from '../components/Heatmap'
-import { Trash } from '../components/Icons'
+import { SessionRow } from '../components/SessionRow'
 import { Empty, PageHeader } from '../components/ui'
-import { describeBlocks, formatDuration, planBlocks } from '../lib/schedule'
+import { formatDuration } from '../lib/schedule'
 import { knownSkill } from '../lib/skills'
 import {
   currentStreak,
@@ -23,10 +21,7 @@ const days = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`
 export function Stats() {
   const allSessions = useApp((s) => s.sessions)
   const skills = useApp((s) => s.skills)
-  const challenges = useApp((s) => s.challenges)
   const go = useApp((s) => s.go)
-  const deleteSession = useApp((s) => s.deleteSession)
-  const [confirm, setConfirm] = useState<string | null>(null)
   const [picked, setPicked] = useState<SkillFilter>('all')
 
   const perSkill = useMemo(() => skillTotals(allSessions, skills), [allSessions, skills])
@@ -35,7 +30,6 @@ export function Stats() {
   const filter: SkillFilter = picked === 'all' || (picked === 'none' && hasUntagged) || knownSkill(skills, picked) ? picked : 'all'
   const filterName = filter === 'all' ? null : filter === 'none' ? 'No skill' : skills.find((k) => k.id === filter)?.name
   const sessions = useMemo(() => sessionsForSkill(allSessions, skills, filter), [allSessions, skills, filter])
-  const skillName = (id?: string) => skills.find((k) => k.id === id)?.name
 
   const byDay = useMemo(() => minutesByDay(sessions), [sessions])
   const t = useMemo(() => totals(sessions), [sessions])
@@ -48,20 +42,6 @@ export function Stats() {
     { label: 'Current streak', value: days(currentStreak(byDay, new Date())) },
     { label: 'Longest streak', value: days(longestStreak(byDay)) }
   ]
-
-  const describe = (s: SessionRecord) => {
-    if (s.challenge) {
-      const ch = challenges.find((c) => c.id === s.challenge!.challengeId)
-      return `${ch?.name ?? 'Challenge'}, level ${s.challenge.level + 1}`
-    }
-    if (s.redoOf) return 'Redo of flagged poses'
-    if (s.plan.mode === 'relaxed') return 'Relaxed, no timer'
-    if (s.plan.mode === 'memory') {
-      const refs = new Set(s.poses.map((p) => p.imageId)).size
-      return `Memory: ${refs} ${refs === 1 ? 'reference' : 'references'}, ${s.poses.length} attempts`
-    }
-    return describeBlocks(planBlocks(s.plan, s.poses.length))
-  }
 
   return (
     <div className="page-form">
@@ -90,7 +70,8 @@ export function Stats() {
         )}
       </PageHeader>
       <section aria-label={filterName ? `Practice heatmap: ${filterName}` : 'Practice heatmap'} className="rounded-lg bg-surface p-5 ring-1 ring-line">
-        <Heatmap sessions={sessions} />
+        <Heatmap sessions={sessions} onDay={(day) => go({ name: 'history', day })} />
+        <p className="mt-1 text-[12px] text-muted">Click a day to see its sessions.</p>
       </section>
 
       <dl className="mt-6 grid grid-cols-5 gap-4">
@@ -104,7 +85,14 @@ export function Stats() {
 
       {skills.length > 0 && <SkillTable rows={perSkill} />}
 
-      <h2 className="mt-10 pb-3 text-[17px] font-semibold">History{filterName ? `: ${filterName}` : ''}</h2>
+      <div className="mt-10 flex items-baseline gap-3 pb-3">
+        <h2 className="text-[17px] font-semibold">Recent sessions{filterName ? `: ${filterName}` : ''}</h2>
+        {history.length > 0 && (
+          <button type="button" onClick={() => go({ name: 'history' })} className="text-blue hover:underline">
+            All {history.length} in History
+          </button>
+        )}
+      </div>
       {!history.length ? (
         filterName ? (
           <Empty title={`No sessions for ${filterName} yet`}>Pick a skill on the Practice page, and its sessions show up here.</Empty>
@@ -113,62 +101,8 @@ export function Stats() {
         )
       ) : (
         <ul className="divide-y divide-line border-y border-line">
-          {history.map((s) => (
-            <li key={s.id} className="group flex items-center gap-4 py-2.5">
-              <button
-                type="button"
-                onClick={() => go({ name: 'review', sessionId: s.id })}
-                className="flex min-w-0 flex-1 items-center gap-4 text-left"
-              >
-                <span className="flex -space-x-3">
-                  {s.poses.slice(0, 3).map((p, k) => (
-                    <img
-                      key={k}
-                      src={thumbUrl(p.imagePath, 96, p.keptPath)}
-                      alt=""
-                      loading="lazy"
-                      className="h-10 w-8 rounded object-cover ring-2 ring-bg"
-                    />
-                  ))}
-                </span>
-                <span className="w-44 shrink-0 text-ink">
-                  {new Date(s.startedAt).toLocaleString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: '2-digit'
-                  })}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-muted group-hover:text-ink">
-                  {describe(s)}
-                  {filter === 'all' && skillName(s.plan.skillId) ? ` · ${skillName(s.plan.skillId)}` : ''}
-                </span>
-                <span className="tnum w-20 text-right text-ink">{formatDuration(s.activeMs / 1000)}</span>
-                <span className="w-24 text-right text-[12.5px] text-muted">
-                  {s.reviewed ? 'Reviewed' : s.finished ? 'Not reviewed' : 'Stopped early'}
-                </span>
-              </button>
-              {confirm === s.id ? (
-                <span className="flex gap-1">
-                  <button type="button" className="h-8 rounded-md px-2 text-red hover:bg-raised" onClick={() => deleteSession(s.id)}>
-                    Delete
-                  </button>
-                  <button type="button" className="h-8 rounded-md px-2 text-muted hover:bg-raised" onClick={() => setConfirm(null)}>
-                    Keep
-                  </button>
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  aria-label="Delete session"
-                  title="Delete session"
-                  onClick={() => setConfirm(s.id)}
-                  className="invisible flex h-8 w-8 items-center justify-center rounded-md text-muted hover:text-red group-hover:visible"
-                >
-                  <Trash size={15} />
-                </button>
-              )}
-            </li>
+          {history.slice(0, 5).map((s) => (
+            <SessionRow key={s.id} session={s} showSkill={filter === 'all'} />
           ))}
         </ul>
       )}

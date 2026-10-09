@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { TitleBar, WindowButtons } from './components/TitleBar'
 import { UpdateBanner } from './components/UpdateBanner'
 import { Challenges } from './pages/Challenges'
+import { History } from './pages/History'
 import { Library } from './pages/Library'
 import { MemorySession } from './pages/MemorySession'
 import { Practice } from './pages/Practice'
@@ -77,6 +78,9 @@ export function App() {
       break
     case 'stats':
       page = <Stats />
+      break
+    case 'history':
+      page = <History key={view.day ?? 'all'} day={view.day} />
       break
     case 'settings':
       page = <Settings />

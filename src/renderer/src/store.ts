@@ -21,7 +21,7 @@ import {
   type UpdateStatus
 } from '@shared/types'
 import { completeLevel } from './lib/challenges'
-import type { Item, Lib } from './lib/library'
+import { resolveBoardIds, type Item, type Lib } from './lib/library'
 import { createMemory, type MemoryState } from './lib/memoryEngine'
 import { findSkill, normalizeSkillName, withoutSkill } from './lib/skills'
 import { activeMs, createEngine, type EngineState, type Slot } from './lib/sessionEngine'
@@ -32,6 +32,7 @@ export type View =
   | { name: 'viewer'; boardId: string; index: number }
   | { name: 'challenges'; challengeId?: string }
   | { name: 'stats' }
+  | { name: 'history'; day?: string }
   | { name: 'settings' }
   | { name: 'session' }
   | { name: 'review'; sessionId: string }
@@ -335,7 +336,21 @@ export const useApp = create<State>((set, get) => ({
   },
 
   deleteSession(id) {
-    set({ sessions: get().sessions.filter((s) => s.id !== id) })
+    const before = get().sessions
+    const at = before.findIndex((s) => s.id === id)
+    if (at < 0) return
+    const removed = before[at]
+    set({ sessions: before.filter((s) => s.id !== id) })
+    get().notify('Session deleted.', {
+      label: 'Undo',
+      run: () => {
+        const now = get().sessions
+        if (now.some((s) => s.id === id)) return
+        const sessions = now.slice()
+        sessions.splice(Math.min(at, sessions.length), 0, removed)
+        set({ sessions })
+      }
+    })
   },
 
   setFloat(patch) {
@@ -424,8 +439,14 @@ export const useApp = create<State>((set, get) => ({
       redo: false
     }))
     const poses = run.memory ? run.results : timed
+    // Collection names now, so history can still find the session after renames.
+    const { boards, library } = get()
+    const boardNames = resolveBoardIds({ boards, folders: library.folders }, run.plan.boardIds, run.plan.folderIds)
+      .map((id) => boards.find((b) => b.id === id)?.name)
+      .filter((n): n is string => !!n)
     const record: SessionRecord = {
       id: run.id,
+      ...(boardNames.length ? { boardNames } : {}),
       startedAt: run.startedAt,
       endedAt: Date.now(),
       activeMs: Math.round(drawn),

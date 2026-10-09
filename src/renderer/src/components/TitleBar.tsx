@@ -6,6 +6,7 @@ const TABS: { name: View['name']; label: string }[] = [
   { name: 'practice', label: 'Practice' },
   { name: 'library', label: 'Library' },
   { name: 'challenges', label: 'Challenges' },
+  { name: 'history', label: 'History' },
   { name: 'stats', label: 'Stats' }
 ]
 
@@ -30,7 +31,7 @@ function useStroke(current: string): { index: number; key: string } {
 
 function activeTab(view: View): View['name'] {
   if (view.name === 'viewer') return 'library'
-  if (view.name === 'review') return 'stats'
+  if (view.name === 'review') return 'history'
   return view.name
 }
 

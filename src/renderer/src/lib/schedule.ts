@@ -28,28 +28,40 @@ export function shuffled<T>(list: T[], rng: Rng = Math.random): T[] {
   return a
 }
 
+/** Image ids drawn recently, with when each was last drawn (a Set works too: no order among them). */
+export type Seen = Set<string> | Map<string, number>
+
+/**
+ * Fresh images first: the order stays as it is (shuffled or not), then
+ * images not drawn recently move to the front. Among the drawn ones, the one
+ * drawn longest ago comes first; ties keep their order.
+ */
+export function freshFirst(round: ImageRef[], seen: Seen): ImageRef[] {
+  const fresh = round.filter((i) => !seen.has(i.id))
+  const used = round.filter((i) => seen.has(i.id))
+  if (seen instanceof Map) used.sort((a, b) => (seen.get(a.id) ?? 0) - (seen.get(b.id) ?? 0))
+  return [...fresh, ...used]
+}
+
 /**
  * Pick `n` images (0 = all of them once). No image repeats until the whole
  * pool has been used; when a session needs more images than the pool holds,
  * it starts a new round without putting the same image twice in a row.
- * Images in `seenRecently` go to the end of the first round, so fresh ones
- * come first.
+ * With `seenRecently`, the first round puts fresh images first (see freshFirst).
  */
 export function pickImages(
   pool: ImageRef[],
   n: number,
   shuffle: boolean,
   rng: Rng = Math.random,
-  seenRecently?: Set<string>
+  seenRecently?: Seen
 ): ImageRef[] {
   if (!pool.length) return []
   const want = n > 0 ? n : pool.length
   const out: ImageRef[] = []
   while (out.length < want) {
     let round = shuffle ? shuffled(pool, rng) : pool.slice()
-    if (!out.length && seenRecently?.size) {
-      round = [...round.filter((i) => !seenRecently.has(i.id)), ...round.filter((i) => seenRecently.has(i.id))]
-    }
+    if (!out.length && seenRecently?.size) round = freshFirst(round, seenRecently)
     const prev = out[out.length - 1]
     if (prev && round.length > 1 && round[0].id === prev.id) {
       round = [...round.slice(1), round[0]]
@@ -74,7 +86,7 @@ export function estimateMemorySeconds(refs: number, m: { studySeconds: number; d
 export interface SlotOptions {
   /** Rest after the last pose of each block (not after the final one); 0 = the usual rest. */
   blockRest?: number
-  seenRecently?: Set<string>
+  seenRecently?: Seen
 }
 
 export function slotsFromBlocks(
@@ -104,7 +116,7 @@ export function slotsFromBlocks(
   return slots
 }
 
-export function slotsForPlan(plan: SessionPlan, pool: ImageRef[], rng: Rng = Math.random, seenRecently?: Set<string>): Slot[] {
+export function slotsForPlan(plan: SessionPlan, pool: ImageRef[], rng: Rng = Math.random, seenRecently?: Seen): Slot[] {
   const blockRest = plan.mode === 'class' ? (plan.blockRest ?? 0) : 0
   return slotsFromBlocks(planBlocks(plan, pool.length), pool, plan.shuffle, rng, {
     blockRest,
@@ -112,10 +124,15 @@ export function slotsForPlan(plan: SessionPlan, pool: ImageRef[], rng: Rng = Mat
   })
 }
 
-/** Image ids drawn in sessions during the last `days` days. */
-export function recentlySeen(sessions: { startedAt: number; poses: { imageId: string }[] }[], now: number, days = 7): Set<string> {
+/** Image ids drawn in sessions during the last `days` days, with when each was last drawn. */
+export function recentlySeen(sessions: { startedAt: number; poses: { imageId: string }[] }[], now: number, days = 7): Map<string, number> {
   const since = now - days * 86_400_000
-  return new Set(sessions.filter((s) => s.startedAt >= since).flatMap((s) => s.poses.map((p) => p.imageId)))
+  const out = new Map<string, number>()
+  for (const s of sessions) {
+    if (s.startedAt < since) continue
+    for (const p of s.poses) out.set(p.imageId, Math.max(out.get(p.imageId) ?? 0, s.startedAt))
+  }
+  return out
 }
 
 export function slotsForLevel(level: Level, pool: ImageRef[], rng: Rng = Math.random): Slot[] {

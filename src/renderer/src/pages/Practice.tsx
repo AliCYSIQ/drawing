@@ -55,6 +55,8 @@ export function Practice() {
     return available.filter((i) => fav.has(i.id))
   }, [available, favoriteImages])
   const pool = plan.favoritesOnly ? favoritesHere : available
+  const seen = useMemo(() => recentlySeen(sessions, Date.now()), [sessions])
+  const freshCount = useMemo(() => pool.filter((i) => !seen.has(i.id)).length, [pool, seen])
   const missingHere = useMemo(() => {
     if (!plan.favoritesOnly) return skipped
     const fav = new Set(favoriteImages)
@@ -74,7 +76,7 @@ export function Practice() {
   const needsRegion = plan.capture && !settings.captureRegion
 
   const start = () => {
-    const slots = slotsForPlan(plan, pool, Math.random, recentlySeen(sessions, Date.now()))
+    const slots = slotsForPlan(plan, pool, Math.random, seen)
     if (!slots.length) return
     startRun({ plan, slots })
   }
@@ -197,7 +199,17 @@ export function Practice() {
                 checked={plan.freshFirst !== false}
                 onChange={(freshFirst) => setPlan({ freshFirst })}
                 label="Fresh images first"
-                hint="Images you drew in the last 7 days come after ones you haven’t."
+                hint={
+                  <>
+                    {plan.shuffle ? 'Shuffled first, then images' : 'Images'} you haven’t drawn in the last 7 days go to the front; the ones you drew longest ago
+                    come next.
+                    {pool.length > 0 && (
+                      <span className="tnum block">
+                        Here: {freshCount} fresh, {pool.length - freshCount} drawn this week.
+                      </span>
+                    )}
+                  </>
+                }
               />
               <Toggle
                 checked={!!plan.favoritesOnly}

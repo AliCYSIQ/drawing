@@ -101,7 +101,24 @@ describe('schedule', () => {
       ],
       now
     )
-    expect([...seen]).toEqual(['a'])
+    expect([...seen.keys()]).toEqual(['a'])
+    expect(seen.get('a')).toBe(now - 2 * day)
+  })
+
+  it('shuffle and fresh first together: shuffled, then fresh in front, then the ones drawn longest ago', () => {
+    const pool = imgs(6)
+    const seen = new Map([
+      ['i0', 300],
+      ['i1', 100],
+      ['i2', 200]
+    ])
+    const shuffledOnly = pickImages(pool, 6, true, seeded(5))
+    const picked = pickImages(pool, 6, true, seeded(5), seen)
+    // Fresh ones keep their shuffled order...
+    const fresh = shuffledOnly.filter((p) => !seen.has(p.id)).map((p) => p.id)
+    expect(picked.slice(0, 3).map((p) => p.id)).toEqual(fresh)
+    // ...and the drawn ones follow, longest ago first.
+    expect(picked.slice(3).map((p) => p.id)).toEqual(['i1', 'i2', 'i0'])
   })
 
   it('estimates length with rest between poses', () => {

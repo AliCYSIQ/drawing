@@ -77,7 +77,7 @@ test('skills: add in Settings, pick on Practice, remembered next time, totals in
   await page.getByRole('radiogroup', { name: 'Show stats for' }).getByRole('radio', { name: 'Hands' }).click()
   await expect(page.getByText('No sessions for Hands yet')).toBeVisible()
   await page.getByRole('radiogroup', { name: 'Show stats for' }).getByRole('radio', { name: 'Gesture' }).click()
-  await expect(page.getByRole('heading', { name: 'History: Gesture' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Recent sessions: Gesture' })).toBeVisible()
   await expect(page.getByRole('list').last().getByRole('listitem')).toHaveCount(1)
 })
 
