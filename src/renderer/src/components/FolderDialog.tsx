@@ -5,10 +5,10 @@ import { uid, useApp } from '../store'
 import { ArrowRight, Folder as FolderIcon, Plus } from './Icons'
 import { Button } from './ui'
 
-const VERB: Record<Transfer, string> = { move: 'Move here', copy: 'Copy here', shortcut: 'Add shortcut here' }
+const VERB: Record<Transfer, string> = { move: 'Move here', copy: 'Copy here' }
 
 /**
- * "Move to…", "Copy to…" and "Add shortcut to…": a folder tree to pick where.
+ * "Move to…" and "Copy to…": a folder tree to pick where.
  * Places the items can't go are greyed out with the reason. A new folder can
  * be made inside the one picked.
  */
@@ -48,13 +48,13 @@ export function FolderDialog({
   }, [onClose, naming])
 
   const makeFolder = (name: string) => {
-    const f: Folder = { id: uid(), name: name.trim() || 'New folder', parentId: picked, shortcuts: [], createdAt: Date.now() }
+    const f: Folder = { id: uid(), name: name.trim() || 'New folder', parentId: picked, createdAt: Date.now() }
     setLibrary((l) => ({ ...l, folders: [...l.folders, f] }))
     setPicked(f.id)
     setNaming(null)
   }
 
-  const title = op === 'move' ? 'Move to' : op === 'copy' ? 'Copy to' : 'Add a shortcut in'
+  const title = op === 'move' ? 'Move to' : 'Copy to'
   const what = items.length === 1 ? '1 item' : `${items.length} items`
 
   return (

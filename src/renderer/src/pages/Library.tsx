@@ -2,16 +2,18 @@ import { useEffect, useMemo, useState } from 'react'
 import { thumbUrl } from '@shared/api'
 import { SUGGESTED_TAGS, type Board, type Folder, type FolderInfo, type ImageRef, type PinterestImport, type PinterestProgress } from '@shared/types'
 import { DeleteDialog, FolderBrowser } from '../components/FolderBrowser'
-import { ArrowLeft, Close, Folder as FolderIcon, Images, Link, Plus, Refresh, Star, Trash } from '../components/Icons'
+import { FolderDialog } from '../components/FolderDialog'
+import { ArrowLeft, Copy, Folder as FolderIcon, Images, Link, Plus, Refresh, Star, Trash } from '../components/Icons'
 import { ImportSheet, type ImportOptions } from '../components/ImportSheet'
 import { TagEditor } from '../components/TagEditor'
 import { Button, Empty, IconButton } from '../components/ui'
 import {
   canMoveFolder,
+  copyItems,
   deleteItems,
   descendantIds,
   folderLabel,
-  foldersWithShortcut,
+  moveItems,
   searchBoards,
   type SortKey
 } from '../lib/library'
@@ -132,7 +134,7 @@ function BoardList({ folderId }: { folderId?: string }) {
         made = [await collection(info.name, info.path, true, folderId, refs)].filter((b): b is Board => !!b)
       }
     } else {
-      const group: Folder = { id: uid(), name: info.name, parentId: folderId, shortcuts: [], createdAt: now }
+      const group: Folder = { id: uid(), name: info.name, parentId: folderId, createdAt: now }
       setLibrary((l) => ({ ...l, folders: [...l.folders, group] }))
       const subs = info.subfolders.filter((x) => o.subfolders.includes(x.path))
       const parts = await Promise.all([
@@ -164,7 +166,7 @@ function BoardList({ folderId }: { folderId?: string }) {
   }
 
   const makeFolder = (name: string) => {
-    const f: Folder = { id: uid(), name: name.trim() || 'New folder', parentId: folderId, shortcuts: [], createdAt: Date.now() }
+    const f: Folder = { id: uid(), name: name.trim() || 'New folder', parentId: folderId, createdAt: Date.now() }
     setLibrary((l) => ({ ...l, folders: [...l.folders, f] }))
     setNewFolder(null)
   }
@@ -521,7 +523,9 @@ function BoardDetail({ board }: { board: Board }) {
         void useApp.getState().checkMissing()
         notify(`${images.length} images in the folder.`)
       } else if (board.kind === 'pinterest' && board.source) {
-        const r = await window.api.importPinterest(board.id, board.source)
+        // Images a copy of this board still uses are kept even if the pin is gone.
+        const others = useApp.getState().boards.filter((b) => b.id !== board.id).flatMap((b) => b.images.map((i) => i.path))
+        const r = await window.api.importPinterest(board.id, board.source, others)
         updateBoard(board.id, { images: r.images, syncedAt: Date.now() })
         notify(syncMessage(r))
       }
@@ -598,23 +602,22 @@ function BoardDetail({ board }: { board: Board }) {
   }
 
   const home = folders.find((f) => f.id === board.folderId)
-  const alsoIn = foldersWithShortcut(folders, board.id)
+  const [copyTo, setCopyTo] = useState(false)
 
   const moveTo = (folderId?: string) => {
-    updateBoard(board.id, { folderId })
-    // A shortcut in its new home would be a duplicate.
-    if (folderId) setShortcut(folderId, false)
+    if (folderId === board.folderId) return
+    useApp.getState().changeLibrary('move', (l) => moveItems(l, [{ type: 'board', id: board.id }], folderId), `Moved “${board.name}”.`)
   }
 
-  const setShortcut = (folderId: string, on: boolean) =>
-    setLibrary((l) => ({
-      ...l,
-      folders: l.folders.map((f) =>
-        f.id !== folderId
-          ? f
-          : { ...f, shortcuts: on ? [...new Set([...f.shortcuts, board.id])] : f.shortcuts.filter((x) => x !== board.id) }
-      )
-    }))
+  /** To have a collection in another folder too, copy it there. */
+  const copyInto = (folderId?: string) => {
+    setCopyTo(false)
+    useApp.getState().changeLibrary(
+      'copy',
+      (l) => copyItems(l, [{ type: 'board', id: board.id }], folderId, uid),
+      `Copied “${board.name}” to ${folderId ? `“${folders.find((f) => f.id === folderId)?.name}”` : 'the top level'}.`
+    )
+  }
 
   const toggleFavoriteImage = (id: string) =>
     setLibrary((l) => ({
@@ -708,42 +711,11 @@ function BoardDetail({ board }: { board: Board }) {
           Folder
           <FolderSelect value={board.folderId} onChange={moveTo} />
         </label>
-        {folders.length > 0 && (
-          <label className="flex items-center gap-2">
-            Also show in
-            <select
-              aria-label="Add a shortcut in another folder"
-              value=""
-              onChange={(e) => e.target.value && setShortcut(e.target.value, true)}
-              className="h-9 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
-            >
-              <option value="">Add a shortcut…</option>
-              {folders
-                .filter((f) => f.id !== board.folderId && !f.shortcuts.includes(board.id))
-                .map((f) => ({ id: f.id, label: folderLabel(folders, f.id) }))
-                .sort((a, b) => a.label.localeCompare(b.label))
-                .map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-            </select>
-          </label>
-        )}
-        {alsoIn.map((f) => (
-          <span key={f.id} className="inline-flex h-7 items-center gap-1 rounded-full bg-raised pl-3 pr-1 text-[13px] text-ink">
-            <Link size={12} /> {folderLabel(folders, f.id)}
-            <button
-              type="button"
-              aria-label={`Remove the shortcut in ${f.name}`}
-              onClick={() => setShortcut(f.id, false)}
-              className="flex h-5 w-5 items-center justify-center rounded-full text-muted hover:bg-line hover:text-ink"
-            >
-              <Close size={12} />
-            </button>
-          </span>
-        ))}
+        <Button tone="ghost" onClick={() => setCopyTo(true)} title="A copy is a separate collection with the same images, for having it in another folder too">
+          <Copy size={15} /> Copy to…
+        </Button>
       </div>
+      {copyTo && <FolderDialog op="copy" items={[{ type: 'board', id: board.id }]} start={board.folderId} onClose={() => setCopyTo(false)} onPick={copyInto} />}
 
       {missing.size > 0 && (
         <div role="alert" className="mb-5 flex flex-wrap items-center gap-3 rounded-lg bg-red/10 px-4 py-3 ring-1 ring-red/40">

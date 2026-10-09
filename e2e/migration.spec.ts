@@ -42,7 +42,7 @@ test('v0.1 data opens: categories become tags, a backup is kept, sessions are un
   expect(backups).toHaveLength(1)
   expect(existsSync(join(data, 'backups', backups[0], 'boards.json'))).toBe(true)
   await app.close()
-  expect(JSON.parse(readFileSync(join(data, 'settings.json'), 'utf8')).schemaVersion).toBe(2)
+  expect(JSON.parse(readFileSync(join(data, 'settings.json'), 'utf8')).schemaVersion).toBe(3)
   rmSync(userData, { recursive: true, force: true })
   rmSync(refs, { recursive: true, force: true })
 })

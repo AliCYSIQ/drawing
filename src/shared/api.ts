@@ -35,12 +35,13 @@ export interface Api {
   importUrl(boardId: string, url: string): Promise<ImageRef>
   /** Save pasted or dropped image bytes into a collection board's folder. */
   importBytes(boardId: string, name: string, bytes: Uint8Array): Promise<ImageRef>
-  importPinterest(boardId: string, url: string): Promise<PinterestImport>
+  /** `keep`: files other collections (copies) use, never deleted by the sync. */
+  importPinterest(boardId: string, url: string, keep?: string[]): Promise<PinterestImport>
   onPinterestProgress(cb: (p: PinterestProgress) => void): () => void
-  /** Delete the files the app stored for a board (Pinterest cache, collection images). */
+  /** Delete the files the app stored for a board that was never saved (a failed import). */
   removeBoardFiles(boardId: string): Promise<void>
-  /** Give a copied collection its own copy of the files the app keeps; returns its image list. */
-  duplicateBoardFiles(fromId: string, toId: string, images: ImageRef[]): Promise<ImageRef[]>
+  /** Remove stored images no collection uses any more (copies share files); returns how many. */
+  cleanStoredFiles(liveIds: string[], inUse: string[]): Promise<number>
   /** Path of a dropped File, or '' when it isn't on disk. */
   pathForFile(file: File): string
   pickPhotos(): Promise<string[]>

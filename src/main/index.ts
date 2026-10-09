@@ -8,9 +8,9 @@ import type { ResetPart } from '@shared/reset'
 import { captureRegion, pickRegion } from './capture'
 import { attachFloat, boundsBeforeFloat, getFloat, setFloat, setHotkeys, setSessionActive } from './float'
 import {
+  cleanStoredFiles,
   copyImages,
   deleteSessionFile,
-  duplicateBoardFiles,
   importBytes,
   importPinterest,
   importUrl,
@@ -182,10 +182,13 @@ function registerIpc(): void {
   handle('library:importUrl', (boardId: string, url: string) => importUrl(boardId, url))
   handle('library:importBytes', (boardId: string, name: string, bytes: Uint8Array) => importBytes(boardId, name, bytes))
   handle('library:removeBoardFiles', (boardId: string) => removeBoardFiles(boardId))
-  handle('library:duplicateBoardFiles', (fromId: string, toId: string, images: ImageRef[]) => duplicateBoardFiles(fromId, toId, images))
-  handle('library:importPinterest', (boardId: string, url: string) =>
-    importPinterest(boardId, url, (stage, done, total) =>
-      main?.webContents.send('pinterest:progress', { boardId, stage, done, total })
+  handle('library:cleanStoredFiles', (liveIds: string[], inUse: string[]) => cleanStoredFiles(liveIds, inUse))
+  handle('library:importPinterest', (boardId: string, url: string, keep?: string[]) =>
+    importPinterest(
+      boardId,
+      url,
+      (stage, done, total) => main?.webContents.send('pinterest:progress', { boardId, stage, done, total }),
+      Array.isArray(keep) ? keep : []
     )
   )
 

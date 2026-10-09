@@ -65,8 +65,8 @@ test('drag a collection onto a folder to move it; Ctrl+Z undoes', async () => {
   expect((await saved()).boards[0].folderId).toBeUndefined()
 })
 
-test('select with Ctrl+click, then Move to… a folder', async () => {
-  await tile(name()).click({ modifiers: ['Control'] })
+test('click selects, then Move to… a folder', async () => {
+  await tile(name()).click()
   await expect(page.getByRole('toolbar', { name: 'Selection' })).toContainText('1 selected')
   await page.getByRole('toolbar', { name: 'Selection' }).getByRole('button', { name: /Move to/ }).click()
   const dialog = page.getByRole('dialog', { name: 'Move to' })
@@ -77,7 +77,8 @@ test('select with Ctrl+click, then Move to… a folder', async () => {
 })
 
 test('copy and paste makes an independent collection; right-click has the actions', async () => {
-  await tile('Animals').click()
+  // Double-click opens, like a folder in Windows.
+  await tile('Animals').dblclick()
   await tile(name()).click({ button: 'right' })
   await page.getByRole('menuitem', { name: /^Copy\b.*Ctrl\+C/ }).click()
   await trail().getByRole('button', { name: 'Library' }).click()
@@ -90,7 +91,7 @@ test('copy and paste makes an independent collection; right-click has the action
 })
 
 test('deleting a folder can take what is inside; Undo brings it back', async () => {
-  await tile('Animals').click({ modifiers: ['Control'] })
+  await tile('Animals').click()
   await page.keyboard.press('Delete')
   await page.getByRole('dialog', { name: 'Delete' }).getByRole('button', { name: 'Delete everything inside too' }).click()
   await expect(tile('Animals')).toHaveCount(0)
@@ -100,16 +101,18 @@ test('deleting a folder can take what is inside; Undo brings it back', async () 
   expect((await saved()).boards).toHaveLength(2)
 })
 
-test('Practice browses folders; ticking one practices everything inside', async () => {
+test('Practice: double-click opens a folder; a click picks the whole folder', async () => {
   await page.getByRole('button', { name: 'Practice', exact: true }).click()
-  await page.getByRole('button', { name: /^Animals, folder/ }).click()
+  await page.getByRole('button', { name: /^Animals, folder/ }).dblclick()
   await expect(page.getByRole('navigation', { name: 'Folder path' })).toContainText('Animals')
   await page.getByRole('navigation', { name: 'Folder path' }).getByRole('button', { name: 'Library' }).click()
   // Start fresh: clear what was picked by default.
   await page.getByRole('button', { name: 'Clear', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Start drawing' })).toBeDisabled()
-  await page.getByRole('checkbox', { name: 'Practice everything in Animals' }).click()
+  await page.getByRole('button', { name: /^Animals, folder/ }).click()
+  await expect(page.getByRole('button', { name: /^Animals, folder/ })).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByText('everything inside')).toBeVisible()
-  await expect(page.getByText('3 images', { exact: true })).toBeVisible()
+  await expect(page.getByText('3 images in all', { exact: true })).toBeVisible()
+  await expect(page.getByText(/everything inside: 1 collection, 3 images/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start drawing' })).toBeEnabled()
 })

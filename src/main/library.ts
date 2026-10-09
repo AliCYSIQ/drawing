@@ -135,9 +135,42 @@ export async function importBytes(boardId: string, fileName: string, bytes: Uint
   return refFor(path)
 }
 
+/** Delete every file the app stored for a collection that was never saved (a failed Pinterest import). */
 export async function removeBoardFiles(boardId: string): Promise<void> {
   await rm(collectionDir(boardId), { recursive: true, force: true })
   await rm(pinterestDir(boardId), { recursive: true, force: true })
+}
+
+/**
+ * Remove stored images (pasted, Pinterest) that no collection uses any more.
+ * Copies share files with the collection they were copied from, so a file
+ * goes only when nothing uses it. Only folders of collections that no longer
+ * exist are cleaned; a live collection's folder is left as it is.
+ */
+export async function cleanStoredFiles(liveIds: string[], inUse: string[]): Promise<number> {
+  const live = new Set(liveIds.map(safeName))
+  const used = new Set(inUse.map((p) => p.toLowerCase()))
+  let removed = 0
+  for (const root of [dataDir('collections'), dataDir('cache', 'pinterest')]) {
+    if (!existsSync(root)) continue
+    for (const id of await readdir(root)) {
+      if (live.has(id)) continue
+      const dir = join(root, id)
+      const entries = await readdir(dir, { recursive: true, withFileTypes: true }).catch(() => [])
+      let kept = 0
+      for (const e of entries) {
+        if (!e.isFile()) continue
+        const path = join(e.parentPath, e.name)
+        if (used.has(path.toLowerCase())) kept++
+        else {
+          await rm(path, { force: true })
+          removed++
+        }
+      }
+      if (!kept) await rm(dir, { recursive: true, force: true })
+    }
+  }
+  return removed
 }
 
 /** Which of these files no longer exist. */
@@ -210,8 +243,11 @@ export async function keepPhoto(sessionId: string, src: string): Promise<string>
 export async function importPinterest(
   boardId: string,
   url: string,
-  onProgress: (stage: 'list' | 'download', done: number, total: number) => void
+  onProgress: (stage: 'list' | 'download', done: number, total: number) => void,
+  /** Files other collections (copies) still use: never deleted here. */
+  keep: string[] = []
 ): Promise<PinterestImport> {
+  const kept = new Set(keep.map((p) => p.toLowerCase()))
   const board = await fetchBoard(url, {
     fetch: (u, init) => net.fetch(u, init) as never,
     onProgress: (n, total) => onProgress('list', n, total)
@@ -243,7 +279,7 @@ export async function importPinterest(
     // An interrupted sync must not drop images an earlier sync already saved.
     for (const [id, f] of existing) if (!seen.has(id)) ok.push(refFor(join(dir, f), `https://www.pinterest.com/pin/${id}/`))
   } else {
-    for (const [id, f] of existing) if (!seen.has(id)) await rm(join(dir, f), { force: true })
+    for (const [id, f] of existing) if (!seen.has(id) && !kept.has(join(dir, f).toLowerCase())) await rm(join(dir, f), { force: true })
   }
   if (!ok.length) throw new Error('Could not download any images from this board.')
   return {
@@ -316,33 +352,3 @@ function isInside(dir: string, path: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
 }
 
-/**
- * A copied collection gets its own copy of the image files the app keeps for
- * it (pasted and Pinterest images), so deleting or re-syncing the original
- * can't break the copy. Images linked from your folders stay linked. Ids
- * stay the same, so favorites and history match.
- */
-export async function duplicateBoardFiles(fromId: string, toId: string, images: ImageRef[]): Promise<ImageRef[]> {
-  const pairs: [string, string][] = [
-    [collectionDir(fromId), collectionDir(toId)],
-    [pinterestDir(fromId), pinterestDir(toId)]
-  ]
-  const out: ImageRef[] = []
-  for (const img of images) {
-    const pair = pairs.find(([from]) => isInside(from, img.path))
-    if (!pair) {
-      out.push(img)
-      continue
-    }
-    const target = join(pair[1], relative(pair[0], img.path))
-    try {
-      await mkdir(dirname(target), { recursive: true })
-      if (!existsSync(target)) await copyFile(img.path, target)
-      out.push({ ...img, path: target })
-    } catch {
-      // Keep pointing at the original rather than losing the image.
-      out.push(img)
-    }
-  }
-  return out
-}

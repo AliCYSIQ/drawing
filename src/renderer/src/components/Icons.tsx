@@ -198,12 +198,6 @@ export const Move = (p: IconProps) => (
     <path d="M10 13.5h5.5M13 11l2.5 2.5L13 16" />
   </Icon>
 )
-export const Shortcut = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M8 16c0-5 3-8 9-8" />
-    <path d="M13.5 4.5 17 8l-3.5 3.5" />
-  </Icon>
-)
 export const Search = (p: IconProps) => (
   <Icon {...p}>
     <circle cx="11" cy="11" r="6" />

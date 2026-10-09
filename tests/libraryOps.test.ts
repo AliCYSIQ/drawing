@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Board, Folder } from '@shared/types'
 import {
-  addShortcuts,
   boardIdsInFolder,
   cannotTransfer,
   copyItems,
@@ -16,7 +15,7 @@ import {
   type Lib
 } from '@renderer/lib/library'
 
-const folder = (id: string, name: string, parentId?: string, shortcuts: string[] = []): Folder => ({ id, name, parentId, shortcuts, createdAt: 0 })
+const folder = (id: string, name: string, parentId?: string): Folder => ({ id, name, parentId, createdAt: 0 })
 const board = (id: string, name: string, folderId?: string): Board => ({
   id,
   name,
@@ -29,10 +28,10 @@ const board = (id: string, name: string, folderId?: string): Board => ({
 
 // Human ─┬─ Hands (folder) ── handsB
 //        └─ poses
-// Animals (shortcut to poses)
+// Animals (empty)
 // top (at the top level)
 const lib = (): Lib => ({
-  folders: [folder('human', 'Human'), folder('hands', 'Hands', 'human'), folder('animals', 'Animals', undefined, ['poses'])],
+  folders: [folder('human', 'Human'), folder('hands', 'Hands', 'human'), folder('animals', 'Animals')],
   boards: [board('poses', 'Poses', 'human'), board('handsB', 'Hands close up', 'hands'), board('top', 'Loose')]
 })
 const counter = () => {
@@ -44,7 +43,7 @@ const F = (id: string): Item => ({ type: 'folder', id })
 
 describe('item keys', () => {
   it('round-trip', () => {
-    for (const item of [B('a'), F('b'), { type: 'shortcut', id: 'c', folderId: 'd' } as Item]) expect(parseItemKey(itemKey(item))).toEqual(item)
+    for (const item of [B('a'), F('b')]) expect(parseItemKey(itemKey(item))).toEqual(item)
     expect(parseItemKey('nonsense')).toBeNull()
   })
 })
@@ -53,12 +52,7 @@ describe('moving', () => {
   it('a collection moved into a folder leaves where it was', () => {
     const out = moveItems(lib(), [B('top')], 'animals')
     expect(out.boards.find((b) => b.id === 'top')?.folderId).toBe('animals')
-  })
-
-  it('moving a collection to a folder with its shortcut drops the shortcut', () => {
-    const out = moveItems(lib(), [B('poses')], 'animals')
-    expect(out.boards.find((b) => b.id === 'poses')?.folderId).toBe('animals')
-    expect(out.folders.find((f) => f.id === 'animals')?.shortcuts).toEqual([])
+    expect(out.boards).toHaveLength(3)
   })
 
   it('a folder never goes inside itself; the rest of the selection still moves', () => {
@@ -68,16 +62,9 @@ describe('moving', () => {
     expect(cannotTransfer(lib(), F('human'), 'hands', 'move')).toMatch(/inside itself/)
   })
 
-  it('moving a shortcut moves only the shortcut', () => {
-    const out = moveItems(lib(), [{ type: 'shortcut', id: 'poses', folderId: 'animals' }], 'hands')
-    expect(out.folders.find((f) => f.id === 'animals')?.shortcuts).toEqual([])
-    expect(out.folders.find((f) => f.id === 'hands')?.shortcuts).toEqual(['poses'])
-    expect(out.boards.find((b) => b.id === 'poses')?.folderId).toBe('human')
-  })
-
-  it('shortcuts never go to the top level', () => {
-    expect(cannotTransfer(lib(), { type: 'shortcut', id: 'poses', folderId: 'animals' }, undefined, 'move')).toBeTruthy()
-    expect(addShortcuts(lib(), [B('top')], undefined)).toEqual(lib())
+  it('moving to where it already is does nothing', () => {
+    expect(cannotTransfer(lib(), B('poses'), 'human', 'move')).toMatch(/already there/)
+    expect(cannotTransfer(lib(), B('poses'), 'human', 'copy')).toBeNull()
   })
 })
 
@@ -87,13 +74,13 @@ describe('copying', () => {
     const copy = out.boards.find((b) => b.id === 'new1')!
     expect(copy).toMatchObject({ name: 'Poses (copy)', folderId: 'human' })
     expect(copy.images).toEqual(lib().boards[0].images)
-    expect(out.files).toEqual([{ from: 'poses', to: 'new1' }])
     expect(out.boards).toHaveLength(4)
   })
 
-  it('copying elsewhere keeps the name', () => {
+  it('to have a collection in two folders, copy it: the name stays', () => {
     const out = copyItems(lib(), [B('poses')], 'animals', counter())
-    expect(out.boards.find((b) => b.id === 'new1')?.name).toBe('Poses')
+    expect(out.boards.find((b) => b.id === 'new1')).toMatchObject({ name: 'Poses', folderId: 'animals' })
+    expect(out.boards.find((b) => b.id === 'poses')?.folderId).toBe('human')
   })
 
   it('a folder copy copies everything inside it', () => {
@@ -103,7 +90,6 @@ describe('copying', () => {
     const handsCopy = out.folders.find((f) => f.parentId === top.id)!
     expect(handsCopy.name).toBe('Hands')
     expect(out.boards.filter((b) => b.folderId === top.id || b.folderId === handsCopy.id)).toHaveLength(2)
-    expect(out.files).toHaveLength(2)
   })
 
   it('a folder can’t be copied into its own sub-folder', () => {
@@ -111,22 +97,9 @@ describe('copying', () => {
     expect(out.folders).toHaveLength(3)
   })
 
-  it('copying a shortcut adds another shortcut, not a collection', () => {
-    const out = copyItems(lib(), [{ type: 'shortcut', id: 'poses', folderId: 'animals' }], 'hands', counter())
-    expect(out.boards).toHaveLength(3)
-    expect(out.folders.find((f) => f.id === 'hands')?.shortcuts).toEqual(['poses'])
-  })
-
   it('names: (copy), then (copy 2)', () => {
     expect(copyName('Hands', ['Hands', 'Hands (copy)'])).toBe('Hands (copy 2)')
     expect(copyName('Feet', ['Hands'])).toBe('Feet')
-  })
-})
-
-describe('shortcuts', () => {
-  it('adds shortcuts, skipping folders and the collection’s own home', () => {
-    const out = addShortcuts(lib(), [B('top'), F('hands'), B('handsB')], 'hands')
-    expect(out.folders.find((f) => f.id === 'hands')?.shortcuts).toEqual(['top'])
   })
 })
 
@@ -138,22 +111,13 @@ describe('deleting', () => {
     const all = deleteItems(lib(), [F('human')], 'all')
     expect(all.folders.map((f) => f.id)).toEqual(['animals'])
     expect(all.deletedBoards.sort()).toEqual(['handsB', 'poses'])
-    // Shortcuts to deleted collections go too.
-    expect(all.folders[0].shortcuts).toEqual([])
-  })
-
-  it('removing a shortcut never deletes the collection', () => {
-    const out = deleteItems(lib(), [{ type: 'shortcut', id: 'poses', folderId: 'animals' }], 'keep')
-    expect(out.boards).toHaveLength(3)
-    expect(out.deletedBoards).toEqual([])
   })
 })
 
 describe('practicing a folder', () => {
-  it('includes collections in deeper folders and shortcuts', () => {
-    const l = addShortcuts(lib(), [B('top')], 'hands')
-    expect(boardIdsInFolder(l.folders, l.boards, 'human').sort()).toEqual(['handsB', 'poses', 'top'])
-    expect(resolveBoardIds(l, ['top'], ['hands', 'gone']).sort()).toEqual(['handsB', 'top'])
+  it('includes collections in deeper folders', () => {
+    expect(boardIdsInFolder(lib().folders, lib().boards, 'human').sort()).toEqual(['handsB', 'poses'])
+    expect(resolveBoardIds(lib(), ['top'], ['hands', 'gone']).sort()).toEqual(['handsB', 'top'])
   })
 })
 

@@ -6,19 +6,16 @@ import {
   canMoveFolder,
   childFolders,
   deleteFolder,
-  dropShortcuts,
   folderCover,
   folderLabel,
   folderPath,
-  searchBoards,
-  shortcutsIn
+  searchBoards
 } from '@renderer/lib/library'
 
-const folder = (id: string, name: string, parentId?: string, shortcuts: string[] = []): Folder => ({
+const folder = (id: string, name: string, parentId?: string): Folder => ({
   id,
   name,
   parentId,
-  shortcuts,
   createdAt: 0
 })
 const board = (id: string, name: string, folderId?: string, tags: string[] = []): Board => ({
@@ -33,8 +30,8 @@ const board = (id: string, name: string, folderId?: string, tags: string[] = [])
 
 // Human ─┬─ Hands (folder) ── hands board
 //        └─ poses board
-// Animals (folder), shows "poses" as a shortcut
-const folders = [folder('human', 'Human'), folder('hands', 'Hands', 'human'), folder('animals', 'Animals', undefined, ['poses'])]
+// Animals (folder, empty)
+const folders = [folder('human', 'Human'), folder('hands', 'Hands', 'human'), folder('animals', 'Animals')]
 const boards = [board('poses', 'Dynamic poses', 'human', ['figures']), board('handsB', 'Hands close up', 'hands', ['hands']), board('top', 'Loose')]
 
 describe('library folders', () => {
@@ -48,11 +45,6 @@ describe('library folders', () => {
     expect(childFolders(folders).map((f) => f.id)).toEqual(['animals', 'human'])
     expect(boardsIn(boards, 'human').map((b) => b.id)).toEqual(['poses'])
     expect(boardsIn(boards, undefined).map((b) => b.id)).toEqual(['top'])
-  })
-
-  it('shows shortcuts without moving the collection', () => {
-    expect(shortcutsIn(folders, boards, 'animals').map((b) => b.id)).toEqual(['poses'])
-    expect(boardsIn(boards, 'animals')).toEqual([])
   })
 
   it('finds collections anywhere inside a folder, for its cover', () => {
@@ -74,9 +66,6 @@ describe('library folders', () => {
     expect(out.boards).toHaveLength(3)
   })
 
-  it('removes a deleted collection from shortcuts', () => {
-    expect(dropShortcuts(folders, 'poses').find((f) => f.id === 'animals')?.shortcuts).toEqual([])
-  })
 
   it('searches names and tags, every word must match', () => {
     expect(searchBoards(boards, 'hands').map((b) => b.id)).toEqual(['handsB'])

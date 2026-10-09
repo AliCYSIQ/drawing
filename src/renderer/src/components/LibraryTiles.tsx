@@ -8,7 +8,7 @@ import { thumbUrl } from '@shared/api'
 import type { Board, BoardKind, Folder, ImageRef } from '@shared/types'
 import { folderPath } from '../lib/library'
 import { useApp } from '../store'
-import { ArrowRight, Check, Folder as FolderIcon, Images, Shortcut, Star } from './Icons'
+import { ArrowRight, Check, Folder as FolderIcon, Images, Star } from './Icons'
 
 export const KIND_LABEL: Record<BoardKind, string> = {
   folder: 'Linked folder',
@@ -198,12 +198,17 @@ export function FolderTrail({
   )
 }
 
-/** Small folder and collection chips for the pickers on Practice and Challenges. */
+/**
+ * Small folder and collection chips for the pickers on Practice and
+ * Challenges. A folder chip picks the whole folder on a click and opens on a
+ * double-click (or its arrow button), like a folder in Windows.
+ */
 export function PickFolderChip({
   folder,
   cover,
   count,
   picked,
+  included,
   onOpen,
   onPick
 }: {
@@ -211,35 +216,59 @@ export function PickFolderChip({
   cover: ImageRef[]
   count: string
   picked: boolean
-  onOpen: () => void
+  /** A folder above it is picked, so this one is in already. */
+  included?: string
+  /** `viaDoubleClick`: the two clicks before it already picked and un-picked. */
+  onOpen: (viaDoubleClick: boolean) => void
   onPick: () => void
 }) {
+  const on = picked || !!included
   return (
-    <div className="group relative">
+    <div className="group relative" title={included ? `In the picked folder “${included}”` : 'Click to pick everything in it; double-click to open it'}>
       <button
         type="button"
-        onClick={onOpen}
-        aria-label={`${folder.name}, folder, ${count}. Open`}
-        className={`block w-full rounded-md p-1.5 text-left ring-1 transition-colors ${picked ? 'bg-blue-soft ring-blue' : 'bg-surface ring-line hover:ring-muted'}`}
+        aria-pressed={on}
+        aria-label={`${folder.name}, folder, ${count}`}
+        onClick={onPick}
+        onDoubleClick={() => onOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter') return
+          e.preventDefault()
+          onOpen(false)
+        }}
+        className={`block w-full rounded-md p-1.5 text-left ring-1 transition-colors ${on ? 'bg-blue-soft ring-blue' : 'bg-surface ring-line hover:ring-muted'}`}
       >
         <FolderArt images={cover} small label={count} />
-        <span className="mt-1.5 block truncate px-1 text-[13px] text-ink">{folder.name}</span>
+        <span className="mt-1.5 block truncate px-1 pr-7 text-[13px] text-ink">{folder.name}</span>
       </button>
-      {/* Always shown: it's how a whole folder gets picked. */}
-      <TileCheck checked={picked} show onToggle={onPick} label={`Practice everything in ${folder.name}`} />
+      {on && (
+        <span className="pointer-events-none absolute right-2.5 top-2.5 flex h-5 w-5 items-center justify-center rounded-full bg-blue text-bg">
+          <Check size={13} strokeWidth={2.6} />
+        </span>
+      )}
+      <button
+        type="button"
+        aria-label={`Open ${folder.name}`}
+        title="Open (or double-click)"
+        onClick={() => onOpen(false)}
+        className="absolute bottom-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-line hover:text-ink"
+      >
+        <ArrowRight size={14} />
+      </button>
     </div>
   )
 }
 
-export function PickBoardChip({ board, selected, onClick, shortcut }: { board: Board; selected: boolean; onClick: () => void; shortcut?: boolean }) {
+export function PickBoardChip({ board, selected, onClick, title }: { board: Board; selected: boolean; onClick: () => void; title?: string }) {
   const strip = board.images.slice(0, 4)
   return (
     <button
       type="button"
       aria-pressed={selected}
-      aria-label={`${board.name}${shortcut ? ', shortcut' : ''}, ${board.images.length} images`}
+      aria-label={`${board.name}, ${board.images.length} images`}
+      title={title}
       onClick={onClick}
-      className={`group relative overflow-hidden rounded-md text-left ring-1 transition-colors ${
+      className={`group relative w-full overflow-hidden rounded-md text-left ring-1 transition-colors ${
         selected ? 'bg-blue-soft ring-blue' : 'bg-surface ring-line hover:ring-muted'
       }`}
     >
@@ -250,7 +279,6 @@ export function PickBoardChip({ board, selected, onClick, shortcut }: { board: B
         {!strip.length && <div className="flex-1" />}
       </div>
       <div className="flex items-center gap-2 px-2.5 py-2">
-        {shortcut && <Shortcut size={13} className="shrink-0 text-muted" />}
         <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{board.name}</span>
         {board.favorite && <Star size={12} filled className="shrink-0 text-blue" />}
         <span className="tnum text-[12px] text-muted">{board.images.length}</span>

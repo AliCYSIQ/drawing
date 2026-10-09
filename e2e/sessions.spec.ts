@@ -89,7 +89,7 @@ test('favorites only uses just the starred images', async () => {
   await expect(page.getByRole('button', { name: 'Start drawing' })).toBeDisabled()
 
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: /^refs-/ }).click()
+  await page.getByRole('button', { name: /^refs-/ }).dblclick()
   await page.getByRole('button', { name: 'Open image 1' }).hover()
   await page.getByRole('button', { name: 'Add image to favorites' }).first().click()
   await practice()

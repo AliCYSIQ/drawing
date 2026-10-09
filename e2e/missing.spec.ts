@@ -44,7 +44,7 @@ test('a moved folder shows as missing, history keeps working, and Find folder re
   renameSync(before, after)
   await page.getByRole('button', { name: 'Library' }).click()
   await expect(page.getByText('3 missing')).toBeVisible()
-  await page.getByRole('button', { name: /^Poses, 3 images/ }).click()
+  await page.getByRole('button', { name: /^Poses, 3 images/ }).dblclick()
   await expect(page.getByRole('alert')).toContainText('3 of 3 images can’t be found')
 
   // Sessions skip them; history still shows the kept copies.
@@ -57,7 +57,7 @@ test('a moved folder shows as missing, history keeps working, and Find folder re
 
   // Find folder relinks every image and keeps their ids.
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: /^Poses, 3 images/ }).click()
+  await page.getByRole('button', { name: /^Poses, 3 images/ }).dblclick()
   await answerFolder(after)
   await page.getByRole('button', { name: 'Find folder…' }).click()
   await expect(page.getByText('Found 3 of 3 images in the new place.')).toBeVisible()

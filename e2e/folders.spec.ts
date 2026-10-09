@@ -37,15 +37,15 @@ const newFolder = async (name: string) => {
 const tile = (name: string) => page.getByRole('button', { name: new RegExp(`^${name}`) })
 const collectionName = () => refsDir.split(/[\\/]/).pop()!
 
-test('collections move into folders, can show elsewhere as shortcuts, and folders delete safely', async () => {
+test('collections move into folders, copies put them in a second folder, and folders delete safely', async () => {
   await page.getByRole('button', { name: 'Library' }).click()
   await page.getByRole('button', { name: 'Add folder' }).click()
   await newFolder('Human')
   await newFolder('Animals')
   await expect(tile('Human')).toBeVisible()
 
-  // Move the collection into Human: it leaves the top level.
-  await tile(collectionName()).click()
+  // Move the collection into Human: it leaves the top level, like a file in Windows.
+  await tile(collectionName()).dblclick()
   await page.getByRole('combobox', { name: 'Folder', exact: true }).selectOption({ label: 'Human' })
   await expect(page.getByRole('button', { name: 'Human' })).toBeVisible() // back link now says Human
   await page.getByRole('button', { name: 'Human' }).click()
@@ -53,22 +53,22 @@ test('collections move into folders, can show elsewhere as shortcuts, and folder
   await page.getByRole('navigation', { name: 'Folder path' }).getByRole('button', { name: 'Library' }).click()
   await expect(tile(collectionName())).toHaveCount(0)
 
-  // A shortcut in Animals shows it there too, without moving it.
-  await tile('Human').click()
-  await tile(collectionName()).click()
-  await page.getByRole('combobox', { name: 'Add a shortcut in another folder' }).selectOption({ label: 'Animals' })
-  await expect(page.getByRole('button', { name: 'Remove the shortcut in Animals' })).toBeVisible()
+  // To have it in Animals too, copy it there: a separate collection with the same images.
+  await tile('Human').dblclick()
+  await tile(collectionName()).dblclick()
+  await page.getByRole('button', { name: 'Copy to…' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Copy to' })
+  await dialog.getByRole('button', { name: 'Animals' }).click()
+  await dialog.getByRole('button', { name: 'Copy here' }).click()
+  await expect(page.getByText(/Copied .* to “Animals”/)).toBeVisible()
   await page.getByRole('button', { name: 'Human' }).click()
   await page.getByRole('navigation', { name: 'Folder path' }).getByRole('button', { name: 'Library' }).click()
-  await tile('Animals').click()
-  await expect(page.getByText('Shortcut', { exact: true })).toBeVisible()
-  await page.getByText('Shortcut', { exact: true }).hover()
-  await page.getByRole('button', { name: 'Remove shortcut' }).click()
-  await expect(page.getByText('This folder is empty')).toBeVisible()
+  await tile('Animals').dblclick()
+  await expect(tile(collectionName())).toBeVisible()
 
   // Deleting Human keeps the collection: it moves up to the top level.
   await page.getByRole('navigation', { name: 'Folder path' }).getByRole('button', { name: 'Library' }).click()
-  await tile('Human').click()
+  await tile('Human').dblclick()
   await page.getByRole('button', { name: 'Delete folder' }).click()
   await page.getByRole('button', { name: /Delete folder \(keep/ }).click()
   await expect(tile(collectionName())).toBeVisible()
@@ -76,7 +76,7 @@ test('collections move into folders, can show elsewhere as shortcuts, and folder
 })
 
 test('search finds collections by name or tag, anywhere', async () => {
-  await tile(collectionName()).click()
+  await tile(collectionName()).dblclick()
   await page.getByRole('combobox', { name: 'Add a tag' }).fill('gesture')
   await page.keyboard.press('Enter')
   await page.getByRole('combobox', { name: 'Folder', exact: true }).selectOption({ label: 'Animals' })

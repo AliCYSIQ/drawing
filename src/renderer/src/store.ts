@@ -195,11 +195,14 @@ export const useApp = create<State>((set, get) => ({
         get().updateSettings({ float: { ...prev, ...keep } })
       }
     })
-    // Files of collections deleted last time (kept until now so Undo worked).
-    // Only when the collections list loaded, so a damaged file never deletes anything.
-    const pending = (library?.pendingDelete ?? []).filter((id) => !(boards ?? []).some((b) => b.id === id))
+    // Stored images of collections deleted last time (kept until now so Undo
+    // worked). Copies share files, so only files no collection uses go. Only
+    // when the collections list loaded, so a damaged file never deletes anything.
     if (boards && library?.pendingDelete?.length) {
-      for (const id of pending) void api.removeBoardFiles(id)
+      void api.cleanStoredFiles(
+        boards.map((b) => b.id),
+        boards.flatMap((b) => b.images.map((i) => i.path))
+      )
       set({ library: { ...get().library, pendingDelete: [] } })
     }
     api.onFlush(() => void flushSaves().then(() => api.flushed()))

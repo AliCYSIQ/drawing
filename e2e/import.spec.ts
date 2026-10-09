@@ -55,7 +55,7 @@ test('a folder with sub-folders asks; "one per sub-folder" groups them in a new 
   await sheet().getByRole('button', { name: 'Add' }).click()
   await expect(page.getByText(/Added 3 collections \(7 images\)/)).toBeVisible()
 
-  await page.getByRole('button', { name: new RegExp(`^${rootName}, folder`) }).click()
+  await page.getByRole('button', { name: new RegExp(`^${rootName}, folder`) }).dblclick()
   await expect(page.getByRole('button', { name: /^Heads, 3 images/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /^Hands, 2 images/ })).toBeVisible()
   await expect(page.getByRole('button', { name: new RegExp(`\\(loose images\\), 2 images`) })).toBeVisible()
@@ -66,7 +66,7 @@ test('"only the top folder" leaves sub-folders out, also on rescan', async () =>
   await page.getByRole('button', { name: 'Add folder' }).click()
   await sheet().getByText(/Only the images directly in/).click()
   await sheet().getByRole('button', { name: 'Add' }).click()
-  await page.getByRole('button', { name: new RegExp(`^${rootName}, 2 images`) }).click()
+  await page.getByRole('button', { name: new RegExp(`^${rootName}, 2 images`) }).dblclick()
   await expect(page.getByText(/\(not its sub-folders\)/)).toBeVisible()
   await page.getByRole('button', { name: 'Rescan folder' }).click()
   await expect(page.getByText('2 images in the folder.')).toBeVisible()

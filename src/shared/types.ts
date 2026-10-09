@@ -2,8 +2,9 @@
  * Version of the saved data's format. Raise it with a migration in
  * src/main/migrate.ts whenever saved data changes shape.
  * 1 = v0.1 (fixed categories). 2 = free tags, folders, favorites.
+ * 3 = v0.2.5: no shortcuts (they became copies).
  */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 /** Offered when typing a tag. Only suggestions: any tag can be added. */
 export const SUGGESTED_TAGS = ['figures', 'faces', 'hands', 'feet', 'animals', 'creatures', 'clothing', 'props', 'environments']
@@ -47,13 +48,13 @@ export interface FolderInfo {
   subfolders: { name: string; path: string; count: number }[]
 }
 
-/** A folder in the library. Holds folders and collections; other folders can show a collection as a shortcut. */
+/** A folder in the library. Holds folders and collections, like a folder in Windows. */
 export interface Folder {
   id: string
   name: string
   parentId?: string
-  /** Collections shown here as shortcuts (their home is another folder). */
-  shortcuts: string[]
+  /** Data version 2 only: collections shown here as shortcuts. Version 3 turned them into copies. */
+  shortcuts?: string[]
   createdAt: number
 }
 

@@ -30,8 +30,40 @@ export function boardsV1toV2(boards: unknown): unknown {
   })
 }
 
+/**
+ * v2 → v3: library folders became plain folders, so a collection shown in
+ * another folder as a shortcut becomes a copy there (same name, same images;
+ * copies share the image files, nothing is duplicated on disk).
+ */
+export function shortcutsToCopies(boards: unknown, library: unknown): { boards: unknown; library: unknown } {
+  if (!Array.isArray(boards) || !library || typeof library !== 'object') return { boards, library }
+  const lib = library as Json & { folders?: Json[] }
+  const folders = Array.isArray(lib.folders) ? lib.folders : []
+  const out = boards.slice() as Json[]
+  for (const f of folders) {
+    const ids = Array.isArray(f.shortcuts) ? (f.shortcuts as string[]) : []
+    for (const id of ids) {
+      const b = (boards as Json[]).find((x) => x.id === id)
+      if (!b || b.folderId === f.id) continue
+      out.push({ ...b, id: `${id}-in-${f.id}`, folderId: f.id })
+    }
+  }
+  return {
+    boards: out,
+    library: {
+      ...lib,
+      folders: folders.map((f) => {
+        const { shortcuts, ...rest } = f
+        void shortcuts
+        return rest
+      })
+    }
+  }
+}
+
 const STEPS: Record<number, (files: DataFiles) => DataFiles> = {
-  1: (files) => ({ ...files, boards: boardsV1toV2(files.boards) })
+  1: (files) => ({ ...files, boards: boardsV1toV2(files.boards) }),
+  2: (files) => ({ ...files, ...shortcutsToCopies(files.boards, files.library) })
 }
 
 /**

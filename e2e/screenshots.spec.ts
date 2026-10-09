@@ -47,7 +47,7 @@ test('screens', async () => {
   await page.getByRole('button', { name: 'Add folder' }).click()
   await page.waitForTimeout(800)
   await shot('02-library')
-  await page.getByRole('button', { name: /^drawing-refs-/ }).first().click()
+  await page.getByRole('button', { name: /^drawing-refs-/ }).first().dblclick()
   await page.waitForTimeout(500)
   await shot('03-board')
 
@@ -136,7 +136,7 @@ test('screens', async () => {
   await page.getByRole('button', { name: 'Done' }).click()
 
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: /^drawing-refs-/ }).first().click()
+  await page.getByRole('button', { name: /^drawing-refs-/ }).first().dblclick()
   await page.getByRole('button', { name: 'Open image 2' }).click()
   await page.getByRole('button', { name: 'Float on top' }).click()
   await page.waitForTimeout(600)
