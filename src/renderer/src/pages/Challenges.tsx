@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { thumbUrl } from '@shared/api'
 import { DEFAULT_PLAN, type Challenge, type LadderKind, type Level } from '@shared/types'
 import { BoardPicker } from '../components/BoardPicker'
+import { SkillPicker } from '../components/SkillPicker'
 import { ArrowLeft, Check, Lock, Plus, Trash } from '../components/Icons'
 import { Button, Empty, Field, IconButton, NumberField, PageHeader } from '../components/ui'
 import { currentLevel, isUnlocked, LADDERS, makeLadder, newLevel } from '../lib/challenges'
@@ -21,6 +22,8 @@ function ChallengeList() {
   const go = useApp((s) => s.go)
   const [making, setMaking] = useState<LadderKind | 'custom' | null>(null)
   const [boardIds, setBoardIds] = useState<string[]>(() => boards.slice(0, 1).map((b) => b.id))
+  const [skillId, setSkillId] = useState<string | undefined>()
+  const skills = useApp((s) => s.skills)
 
   const create = () => {
     if (!making || !boardIds.length) return
@@ -29,7 +32,7 @@ function ChallengeList() {
       making === 'custom'
         ? { id, name: 'My challenge', kind: 'custom', boardIds, levels: [newLevel(1)], completed: [], createdAt: Date.now() }
         : makeLadder(id, making, boardIds, Date.now())
-    setChallenges((list) => [...list, ch])
+    setChallenges((list) => [...list, skillId ? { ...ch, skillId } : ch])
     setMaking(null)
     go({ name: 'challenges', challengeId: id })
   }
@@ -70,6 +73,8 @@ function ChallengeList() {
         <div className="mt-4 rounded-lg bg-surface p-4 ring-1 ring-line">
           <div className="pb-3 font-semibold">Which boards should it use?</div>
           <BoardPicker value={boardIds} onChange={setBoardIds} />
+          <div className="pb-2 pt-4 font-semibold">Skill it counts toward (optional)</div>
+          <SkillPicker value={skillId} onChange={setSkillId} />
           <div className="mt-4 flex gap-2">
             <Button tone="primary" disabled={!boardIds.length} onClick={create}>
               Create challenge
@@ -95,7 +100,12 @@ function ChallengeList() {
                   onClick={() => go({ name: 'challenges', challengeId: c.id })}
                   className="group flex w-full items-center gap-4 py-3 text-left"
                 >
-                  <span className="min-w-0 flex-1 font-semibold group-hover:text-blue">{c.name}</span>
+                  <span className="min-w-0 flex-1 font-semibold group-hover:text-blue">
+                    {c.name}
+                    {skills.find((k) => k.id === c.skillId) && (
+                      <span className="font-normal text-muted"> · {skills.find((k) => k.id === c.skillId)!.name}</span>
+                    )}
+                  </span>
                   <LevelDots challenge={c} />
                   <span className="w-36 text-right text-muted">
                     {next === -1 ? 'All levels done' : `Next: level ${next + 1}`}
@@ -133,6 +143,7 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
   const [selected, setSelected] = useState(() => Math.max(0, currentLevel(challenge)))
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const skill = useApp((s) => s.skills.find((k) => k.id === challenge.skillId))
 
   const update = (patch: Partial<Challenge>) =>
     setChallenges((list) => list.map((c) => (c.id === challenge.id ? { ...c, ...patch } : c)))
@@ -161,7 +172,9 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
         shuffle: true,
         rest: { enabled: level.rest > 0, seconds: level.rest || 5 },
         review: settings.lastPlan?.review ?? true,
-        capture: settings.lastPlan?.capture ?? false
+        capture: settings.lastPlan?.capture ?? false,
+        // The challenge's skill, never the one left from the last practice session.
+        skillId: challenge.skillId
       },
       slots,
       challenge: { challengeId: challenge.id, level: selected }
@@ -181,7 +194,7 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
           className="-ml-1 min-w-0 flex-1 rounded-md bg-transparent px-1 text-[22px] font-semibold tracking-[-0.01em] outline-none hover:bg-surface focus:bg-surface focus:ring-1 focus:ring-blue"
         />
         <Button tone="ghost" onClick={() => setEditing((v) => !v)}>
-          {editing ? 'Done editing' : 'Edit levels and boards'}
+          {editing ? 'Done editing' : 'Edit levels, boards and skill'}
         </Button>
         {confirmDelete ? (
           <>
@@ -204,6 +217,8 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
           </IconButton>
         )}
       </div>
+
+      {skill && !editing && <p className="-mt-4 pb-6 text-muted">Counts toward {skill.name}</p>}
 
       {editing ? (
         <Editor challenge={challenge} update={update} />
@@ -323,6 +338,9 @@ function Editor({ challenge, update }: { challenge: Challenge; update: (p: Parti
     <div className="max-w-3xl">
       <Field label="Boards">
         <BoardPicker value={challenge.boardIds} onChange={(boardIds) => update({ boardIds })} />
+      </Field>
+      <Field label="Skill" hint="Every level's session counts toward this skill in Stats.">
+        <SkillPicker value={challenge.skillId} onChange={(skillId) => update({ skillId })} />
       </Field>
       <div className="mt-4 divide-y divide-line border-t border-line">
         {challenge.levels.map((lv, i) => (

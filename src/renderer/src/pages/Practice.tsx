@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { DEFAULT_PLAN, type Block, type SessionMode, type SessionPlan } from '@shared/types'
 import { BoardPicker } from '../components/BoardPicker'
+import { SkillPicker } from '../components/SkillPicker'
 import { Plus, Trash } from '../components/Icons'
 import { Button, Field, IconButton, NumberField, Segmented, Toggle } from '../components/ui'
 import {
@@ -23,6 +24,8 @@ export function Practice() {
   const sessions = useApp((s) => s.sessions)
   const settings = useApp((s) => s.settings)
   const presets = useApp((s) => s.presets)
+  const skills = useApp((s) => s.skills)
+  const skillName = (id?: string) => skills.find((k) => k.id === id)?.name
   const setPresets = useApp((s) => s.setPresets)
   const updateSettings = useApp((s) => s.updateSettings)
   const startRun = useApp((s) => s.startRun)
@@ -173,6 +176,10 @@ export function Practice() {
             </Field>
           )}
 
+          <Field label="Skill" hint="Optional. The session counts toward this skill in Stats; the next session starts with it.">
+            <SkillPicker value={plan.skillId} onChange={(skillId) => setPlan({ skillId })} />
+          </Field>
+
           <Field label="Options">
             <div className="grid gap-3.5">
               <Toggle checked={plan.shuffle} onChange={(shuffle) => setPlan({ shuffle })} label="Shuffle" />
@@ -246,6 +253,7 @@ export function Practice() {
                     }}
                   >
                     {p.name}
+                    {skillName(p.plan.skillId) && <span className="text-muted"> · {skillName(p.plan.skillId)}</span>}
                   </button>
                   <button
                     type="button"

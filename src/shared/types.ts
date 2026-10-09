@@ -87,8 +87,16 @@ export interface MemoryOptions {
   attempts: number
 }
 
+/** Something you practice, e.g. "gesture" or "hands". You keep the list yourself. */
+export interface Skill {
+  id: string
+  name: string
+}
+
 export interface SessionPlan {
   boardIds: string[]
+  /** The skill this session practices; none = not tagged. Review can change it afterwards. */
+  skillId?: string
   mode: SessionMode
   /** Classic: seconds per pose. */
   seconds: number
@@ -191,6 +199,8 @@ export interface Challenge {
   kind: 'ladder' | 'custom'
   ladder?: LadderKind
   boardIds: string[]
+  /** Every level's session counts toward this skill. */
+  skillId?: string
   levels: Level[]
   /** Indices of completed levels. */
   completed: number[]
@@ -295,7 +305,7 @@ export const DEFAULT_PLAN: SessionPlan = {
   capture: false
 }
 
-export type StoreName = 'boards' | 'library' | 'sessions' | 'challenges' | 'presets' | 'settings'
+export type StoreName = 'boards' | 'library' | 'sessions' | 'challenges' | 'presets' | 'skills' | 'settings'
 
 export interface PinterestImport {
   name: string

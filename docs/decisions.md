@@ -36,7 +36,11 @@ There is a "Remember my choice" option.
 - **Fresh images first** (on by default): images drawn in the last 7 days come after the ones you haven't drawn. They are moved back, not removed, so small boards still work.
 - **Favorites only**: uses just the starred images of the chosen boards.
 
-**Skills (light).** A skill list you edit yourself. Sessions, presets and challenges can be tagged with a skill, and Stats show time and sessions per skill. There are no goals or schedules: this isn't a planner.
+**Skills (light).** A skill list you edit yourself. There are no goals or schedules: this isn't a planner.
+- **Where a skill is picked:** on Practice (the next session starts with the same one), on a preset, and on a challenge (every level counts toward it). Review can change a session's skill afterwards. One skill per session, so time per skill adds up to the total.
+- **Stats:** time, sessions and the last practice per skill, including skills not practiced yet. A skill filter narrows the heatmap, the figures and the history.
+- **Editing:** Settings lists the skills; a new one can also be added straight from the picker. Renaming keeps everything linked. Deleting a skill keeps its sessions, which then show as "No skill".
+- **Storage:** the list is its own file (`skills.json`). Sessions, presets and challenges only gain an optional `skillId`, so no migration is needed and older data reads as "no skill".
 
 **Storage stays JSON for now**, with a `schemaVersion`. Before any format change, the data folder is backed up to `data/backups/`.
 

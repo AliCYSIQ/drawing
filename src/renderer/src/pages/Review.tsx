@@ -5,6 +5,7 @@ import { Compare, drawingSources, type DrawingSource } from '../components/Compa
 import { ArrowLeft, ArrowRight, Camera, Check, Redo } from '../components/Icons'
 import { Button, IconButton } from '../components/ui'
 import { formatDuration, formatSeconds } from '../lib/schedule'
+import { knownSkill } from '../lib/skills'
 import { mistakeSummary } from '../lib/stats'
 import { useApp } from '../store'
 
@@ -31,6 +32,7 @@ export function Review({ sessionId }: { sessionId: string }) {
   const go = useApp((s) => s.go)
   const startRun = useApp((s) => s.startRun)
   const notify = useApp((s) => s.notify)
+  const skills = useApp((s) => s.skills)
   const [i, setI] = useState(0)
   const [summary, setSummary] = useState(false)
 
@@ -51,7 +53,7 @@ export function Review({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (summary || e.ctrlKey || e.altKey) return
-      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
+      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
       if (e.key === 'ArrowRight') setI((v) => Math.min(count - 1, v + 1))
       else if (e.key === 'ArrowLeft') setI((v) => Math.max(0, v - 1))
       else if (e.key.toLowerCase() === 'r' && session && pose) updatePose(session.id, i, { redo: !pose.redo })
@@ -120,6 +122,25 @@ export function Review({ sessionId }: { sessionId: string }) {
             {session.poses.length} poses, {formatDuration(session.activeMs / 1000)}
           </div>
         </div>
+        {skills.length > 0 && (
+          <label className="flex items-center gap-2 text-muted">
+            Skill
+            <select
+              value={knownSkill(skills, session.plan.skillId) ?? ''}
+              onChange={(e) =>
+                updateSession(session.id, (s) => ({ ...s, plan: { ...s.plan, skillId: e.target.value || undefined } }))
+              }
+              className="h-9 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
+            >
+              <option value="">None</option>
+              {skills.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <Button onClick={addPagePhotos} title="A photo of a whole paper page; it shows next to every pose">
           <Camera size={16} /> Add page photos
         </Button>
