@@ -88,7 +88,8 @@ export function Session() {
       const left = remaining(e, Date.now())
       if (e.phase !== 'pose' || e.paused || left === null || phaseDuration(e) < 10_000) return
       const sec = Math.ceil(left / 1000)
-      const key = `${e.index}-${sec}`
+      // phaseStart changes on restart and back, so the ticks play again for the new countdown.
+      const key = `${e.index}-${e.phaseStart}-${sec}`
       if (sec >= 1 && sec <= 3 && lastTick.current !== key) {
         lastTick.current = key
         chime('tick')
@@ -103,7 +104,7 @@ export function Session() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return
+      if (e.target instanceof HTMLInputElement || e.ctrlKey || e.altKey || e.metaKey) return
       if (e.key === ' ') {
         e.preventDefault()
         doPause()

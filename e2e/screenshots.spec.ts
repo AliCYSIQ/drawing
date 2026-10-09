@@ -51,7 +51,13 @@ test('screens', async () => {
   await page.waitForTimeout(500)
   await shot('03-board')
 
+  await page.getByRole('button', { name: 'Settings' }).click()
+  for (const name of ['Gesture', 'Hands', 'Perspective']) {
+    await page.getByRole('textbox', { name: 'New skill name' }).fill(name)
+    await page.keyboard.press('Enter')
+  }
   await page.getByRole('button', { name: 'Practice' }).click()
+  await page.getByRole('radiogroup', { name: 'Skill' }).getByRole('radio', { name: 'Gesture' }).click()
   await page.waitForTimeout(400)
   await shot('04-practice')
   await page.getByRole('radio', { name: 'Class', exact: true }).click()

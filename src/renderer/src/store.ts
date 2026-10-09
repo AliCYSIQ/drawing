@@ -16,10 +16,12 @@ import {
   type SessionPlan,
   type SessionRecord,
   type Settings,
+  type Skill,
   type StoreName
 } from '@shared/types'
 import { completeLevel } from './lib/challenges'
 import { createMemory, type MemoryState } from './lib/memoryEngine'
+import { findSkill, normalizeSkillName, withoutSkill } from './lib/skills'
 import { activeMs, createEngine, type EngineState, type Slot } from './lib/sessionEngine'
 
 export type View =
@@ -62,6 +64,8 @@ interface State {
   sessions: SessionRecord[]
   challenges: Challenge[]
   presets: Preset[]
+  /** Your skill list; sessions, presets and challenges can count toward one. */
+  skills: Skill[]
   settings: Settings
   float: FloatState
   hotkeyStatus: Record<HotkeyAction, boolean>
@@ -79,6 +83,11 @@ interface State {
   updateBoard(id: string, patch: Partial<Board>): void
   setChallenges(fn: (c: Challenge[]) => Challenge[]): void
   setPresets(fn: (p: Preset[]) => Preset[]): void
+  setSkills(fn: (s: Skill[]) => Skill[]): void
+  /** Adds a skill, or returns the one that already has this name. Null for an empty name. */
+  addSkill(name: string): Skill | null
+  /** Removes a skill. What was tagged with it keeps everything else and shows as no skill. */
+  deleteSkill(id: string): void
   updateSettings(patch: Partial<Settings>): void
   updateSession(id: string, fn: (s: SessionRecord) => SessionRecord): void
   updatePose(sessionId: string, index: number, patch: Partial<PoseResult>): void
@@ -113,6 +122,7 @@ export const useApp = create<State>((set, get) => ({
   sessions: [],
   challenges: [],
   presets: [],
+  skills: [],
   settings: DEFAULT_SETTINGS,
   float: DEFAULT_FLOAT,
   hotkeyStatus: { clickThrough: true, float: true, pause: true, next: true },
@@ -124,12 +134,13 @@ export const useApp = create<State>((set, get) => ({
     if (initStarted) return
     initStarted = true
     const api = window.api
-    const [boards, library, sessions, challenges, presets, saved] = await Promise.all([
+    const [boards, library, sessions, challenges, presets, skills, saved] = await Promise.all([
       api.load<Board[]>('boards'),
       api.load<LibraryMeta>('library'),
       api.load<SessionRecord[]>('sessions'),
       api.load<Challenge[]>('challenges'),
       api.load<Preset[]>('presets'),
+      api.load<Skill[]>('skills'),
       api.load<Settings>('settings')
     ])
     const settings: Settings = {
@@ -147,6 +158,7 @@ export const useApp = create<State>((set, get) => ({
       sessions: sessions ?? [],
       challenges: challenges ?? [],
       presets: presets ?? [],
+      skills: skills ?? [],
       settings,
       float: settings.float,
       loaded: true
@@ -206,6 +218,25 @@ export const useApp = create<State>((set, get) => ({
 
   setPresets(fn) {
     set({ presets: fn(get().presets) })
+  },
+
+  setSkills(fn) {
+    set({ skills: fn(get().skills) })
+  },
+
+  addSkill(raw) {
+    const name = normalizeSkillName(raw)
+    if (!name) return null
+    const existing = findSkill(get().skills, name)
+    if (existing) return existing
+    const skill = { id: uid(), name }
+    set({ skills: [...get().skills, skill] })
+    return skill
+  },
+
+  deleteSkill(id) {
+    const { sessions, presets, challenges, settings, skills } = get()
+    set({ ...withoutSkill({ sessions, presets, challenges, settings }, id), skills: skills.filter((s) => s.id !== id) })
   },
 
   updateSettings(patch) {
@@ -389,6 +420,7 @@ useApp.subscribe((state, prev) => {
   if (state.sessions !== prev.sessions) persist('sessions', state.sessions)
   if (state.challenges !== prev.challenges) persist('challenges', state.challenges)
   if (state.presets !== prev.presets) persist('presets', state.presets)
+  if (state.skills !== prev.skills) persist('skills', state.skills)
   if (state.settings !== prev.settings) persist('settings', state.settings)
 })
 

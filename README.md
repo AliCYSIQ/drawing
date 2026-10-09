@@ -22,7 +22,8 @@ A Windows desktop app for timed reference drawing, drawing from memory, review, 
   - `Ctrl+Alt+L` turns click-through off.
   - Double-click the image or press X to leave float mode.
 - **Challenges:** speed, volume and class ladders, or build your own levels. Finishing a level opens the next one.
-- **Stats:** a heatmap of practice per day, streaks, totals and history.
+- **Skills:** keep a list of what you practice (Settings, or "New skill" on Practice). A session, preset or challenge can count toward one skill, and Review can change it afterwards.
+- **Stats:** a heatmap of practice per day, streaks, totals and history; time and sessions per skill, and a skill filter for the rest of the page.
 
 Your data lives in `%APPDATA%\drawing-practice\data` (Settings → Open data folder). Settings can also save a backup zip.
 

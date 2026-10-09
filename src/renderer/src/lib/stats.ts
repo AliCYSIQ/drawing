@@ -1,4 +1,5 @@
-import type { SessionRecord } from '@shared/types'
+import type { SessionRecord, Skill } from '@shared/types'
+import { knownSkill } from './skills'
 
 /** Local calendar day, e.g. "2026-10-08". */
 export function dayKey(ts: number | Date): string {
@@ -155,4 +156,43 @@ export function recentMistakes(sessions: SessionRecord[], lastSessions = 5): { m
   return [...counts.entries()]
     .map(([mistake, count]) => ({ mistake, count }))
     .sort((a, b) => b.count - a.count || a.mistake.localeCompare(b.mistake))
+}
+
+/** Stats filter: every session, sessions with no skill, or one skill's id. */
+export type SkillFilter = 'all' | 'none' | (string & {})
+
+/** The sessions a skill filter keeps. A deleted skill's sessions count as no skill. */
+export function sessionsForSkill(sessions: SessionRecord[], skills: Skill[], filter: SkillFilter): SessionRecord[] {
+  if (filter === 'all') return sessions
+  return sessions.filter((s) => (knownSkill(skills, s.plan.skillId) ?? 'none') === filter)
+}
+
+export interface SkillTotal {
+  /** Missing for sessions with no skill. */
+  skillId?: string
+  name: string
+  minutes: number
+  sessions: number
+  /** Start of the latest session; missing when never practiced. */
+  lastAt?: number
+}
+
+/**
+ * Time and sessions per skill: every skill, practiced or not, most time
+ * first; then "No skill" when some sessions have none.
+ */
+export function skillTotals(sessions: SessionRecord[], skills: Skill[]): SkillTotal[] {
+  const rows = new Map<string | undefined, SkillTotal>(skills.map((k) => [k.id, { skillId: k.id, name: k.name, minutes: 0, sessions: 0 }]))
+  for (const s of sessions) {
+    const id = knownSkill(skills, s.plan.skillId)
+    const row = rows.get(id) ?? { name: 'No skill', minutes: 0, sessions: 0 }
+    row.minutes += s.activeMs / 60000
+    row.sessions++
+    row.lastAt = Math.max(row.lastAt ?? 0, s.startedAt)
+    rows.set(id, row)
+  }
+  const none = rows.get(undefined)
+  rows.delete(undefined)
+  const sorted = [...rows.values()].sort((a, b) => b.minutes - a.minutes || a.name.localeCompare(b.name))
+  return none ? [...sorted, none] : sorted
 }

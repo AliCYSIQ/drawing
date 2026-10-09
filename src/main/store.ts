@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { StoreName } from '@shared/types'
 
-const NAMES: StoreName[] = ['boards', 'library', 'sessions', 'challenges', 'presets', 'settings']
+const NAMES: StoreName[] = ['boards', 'library', 'sessions', 'challenges', 'presets', 'skills', 'settings']
 
 /** Everything the app saves lives here (inside Electron's userData folder). */
 export function dataDir(...parts: string[]): string {

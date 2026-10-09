@@ -1,6 +1,8 @@
-import { useState } from 'react'
-import { DEFAULT_HOTKEYS, type FolderImport, type HotkeyAction, type Settings as SettingsT } from '@shared/types'
-import { Button, Field, PageHeader, Segmented, Toggle } from '../components/ui'
+import { useEffect, useState } from 'react'
+import { DEFAULT_HOTKEYS, type FolderImport, type HotkeyAction, type Settings as SettingsT, type Skill } from '@shared/types'
+import { Trash } from '../components/Icons'
+import { Button, Field, IconButton, PageHeader, Segmented, Toggle } from '../components/ui'
+import { findSkill, normalizeSkillName } from '../lib/skills'
 import { useApp } from '../store'
 
 const HOTKEY_LABELS: Record<HotkeyAction, { name: string; when: string }> = {
@@ -97,6 +99,10 @@ export function Settings() {
             <option value="split">A collection for each sub-folder</option>
             <option value="top">Only the images directly in the folder</option>
           </select>
+        </Field>
+
+        <Field label="Skills" hint="Things you practice. A session, preset or challenge can count toward one, and Stats show time and sessions per skill.">
+          <SkillList />
         </Field>
 
         <Field label="Timer" hint="Some find a counting clock stressful; the line at the bottom still shows how much time is left.">
@@ -204,5 +210,109 @@ export function Settings() {
         </Field>
       </div>
     </div>
+  )
+}
+
+/** Your skills: rename in place, add, or delete (tagged sessions keep their time). */
+function SkillList() {
+  const skills = useApp((s) => s.skills)
+  const sessions = useApp((s) => s.sessions)
+  const setSkills = useApp((s) => s.setSkills)
+  const addSkill = useApp((s) => s.addSkill)
+  const deleteSkill = useApp((s) => s.deleteSkill)
+  const notify = useApp((s) => s.notify)
+  const [text, setText] = useState('')
+  const [confirm, setConfirm] = useState<string | null>(null)
+
+  /** False when the new name is empty or already taken. */
+  const rename = (id: string, raw: string): boolean => {
+    const name = normalizeSkillName(raw)
+    const other = findSkill(skills, name)
+    if (other && other.id !== id) notify(`There's already a skill called ${other.name}.`)
+    if (!name || (other && other.id !== id)) return false
+    setSkills((list) => list.map((k) => (k.id === id ? { ...k, name } : k)))
+    return true
+  }
+
+  const add = () => {
+    const existing = findSkill(skills, text)
+    if (existing) notify(`${existing.name} is already in your skills.`)
+    if (addSkill(text)) setText('')
+  }
+
+  return (
+    <div className="grid gap-2">
+      {skills.map((k) => {
+        const used = sessions.filter((s) => s.plan.skillId === k.id).length
+        return (
+          <div key={k.id} className="flex flex-wrap items-center gap-2">
+            <SkillName skill={k} onRename={(name) => rename(k.id, name)} />
+            <span className="tnum w-24 text-[12.5px] text-muted">
+              {used} {used === 1 ? 'session' : 'sessions'}
+            </span>
+            {confirm === k.id ? (
+              <>
+                <Button
+                  tone="danger"
+                  onClick={() => {
+                    deleteSkill(k.id)
+                    setConfirm(null)
+                  }}
+                >
+                  Delete {k.name}
+                </Button>
+                <Button tone="ghost" onClick={() => setConfirm(null)}>
+                  Keep
+                </Button>
+              </>
+            ) : (
+              <IconButton label={`Delete skill ${k.name}`} onClick={() => setConfirm(k.id)}>
+                <Trash size={15} />
+              </IconButton>
+            )}
+          </div>
+        )
+      })}
+      {confirm && <p className="text-[12.5px] text-muted">Its sessions keep their time and show as “No skill”.</p>}
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          add()
+        }}
+      >
+        <input
+          aria-label="New skill name"
+          value={text}
+          maxLength={40}
+          placeholder={skills.length ? 'Add a skill' : 'Add a skill, e.g. gesture'}
+          onChange={(e) => setText(e.target.value)}
+          className="h-9 w-56 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line placeholder:text-muted/70 focus:ring-blue"
+        />
+        <Button type="submit" disabled={!normalizeSkillName(text)}>
+          Add
+        </Button>
+      </form>
+    </div>
+  )
+}
+
+function SkillName({ skill, onRename }: { skill: Skill; onRename: (name: string) => boolean }) {
+  const [draft, setDraft] = useState(skill.name)
+  useEffect(() => setDraft(skill.name), [skill.name])
+  return (
+    <input
+      aria-label={`Name of skill ${skill.name}`}
+      value={draft}
+      maxLength={40}
+      onChange={(e) => setDraft(e.target.value)}
+      // Switching to another app blurs the field too; only a real blur renames.
+      onBlur={() => document.hasFocus() && draft !== skill.name && !onRename(draft) && setDraft(skill.name)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+        else if (e.key === 'Escape') setDraft(skill.name)
+      }}
+      className="h-9 w-56 rounded-md bg-transparent px-2.5 text-ink outline-none ring-1 ring-line hover:ring-muted focus:bg-surface focus:ring-blue"
+    />
   )
 }
