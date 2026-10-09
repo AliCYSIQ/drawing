@@ -15,3 +15,11 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   shortcutName: Drawing Practice
+# Where the installed app looks for updates (written into it as app-update.yml).
+# The repository must be public. If this code repository becomes private,
+# point `repo` at a public releases-only repository; see docs/releasing.md.
+publish:
+  provider: github
+  owner: AliCYSIQ
+  repo: drawing
+  releaseType: draft

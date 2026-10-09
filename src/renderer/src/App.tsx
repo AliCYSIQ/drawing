@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { TitleBar, WindowButtons } from './components/TitleBar'
+import { UpdateBanner } from './components/UpdateBanner'
 import { Challenges } from './pages/Challenges'
 import { Library } from './pages/Library'
 import { MemorySession } from './pages/MemorySession'
@@ -98,6 +99,7 @@ export function App() {
         <TitleBar />
       )}
       <main className={`min-h-0 flex-1 ${fullBleed || view.name === 'review' ? 'overflow-hidden' : 'overflow-y-auto'}`}>{page}</main>
+      <UpdateBanner />
       {toast && (
         <div
           role="status"

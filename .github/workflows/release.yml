@@ -1,0 +1,45 @@
+# Builds the Windows installer and uploads it to a draft GitHub Release when a
+# version tag (v0.2.5, v0.3.0, …) is pushed. Publishing the draft is what makes
+# installed apps update. See docs/releasing.md.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      # Releases go to this repository unless the RELEASE_REPO variable names
+      # another one (a public releases-only repository, if this one is private).
+      RELEASE_REPO: ${{ vars.RELEASE_REPO || github.event.repository.name }}
+      # The built-in token can only publish to this repository; a releases
+      # repository needs a token with access to it, saved as RELEASE_TOKEN.
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx electron-vite build
+      - name: Build the installer and upload it to a draft release
+        shell: bash
+        run: npx electron-builder --win --publish always -c.publish.owner="${{ github.repository_owner }}" -c.publish.repo="$RELEASE_REPO"

@@ -17,7 +17,8 @@ import {
   type SessionRecord,
   type Settings,
   type Skill,
-  type StoreName
+  type StoreName,
+  type UpdateStatus
 } from '@shared/types'
 import { completeLevel } from './lib/challenges'
 import { createMemory, type MemoryState } from './lib/memoryEngine'
@@ -73,6 +74,7 @@ interface State {
   toast: Toast | null
   /** Image ids per collection whose file can't be found (checked, not saved). */
   missing: Record<string, string[]>
+  update: UpdateStatus
   checkMissing(): Promise<void>
 
   init(): Promise<void>
@@ -128,6 +130,7 @@ export const useApp = create<State>((set, get) => ({
   hotkeyStatus: { clickThrough: true, float: true, pause: true, next: true },
   run: null,
   missing: {},
+  update: { state: 'idle' },
   toast: null,
 
   async init() {
@@ -173,8 +176,13 @@ export const useApp = create<State>((set, get) => ({
         get().updateSettings({ float: { ...prev, ...keep } })
       }
     })
+    api.onFlush(() => void flushSaves().then(() => api.flushed()))
+    api.onUpdateStatus((update) => set({ update }))
+    set({ update: await api.updateStatus() })
     set({ hotkeyStatus: await api.setHotkeys(settings.hotkeys) })
     void get().checkMissing()
+    // A little after start, so the first screen isn't slowed down.
+    if (settings.autoUpdate !== false) setTimeout(() => void api.checkUpdates(), 10_000)
   },
 
   async checkMissing() {
@@ -410,12 +418,30 @@ export function availablePool(state: Pick<State, 'boards' | 'missing'>, pool: Im
 
 // Save each collection shortly after it changes.
 const timers = new Map<StoreName, ReturnType<typeof setTimeout>>()
+const waiting = new Map<StoreName, unknown>()
 function persist(name: StoreName, data: unknown): void {
   clearTimeout(timers.get(name))
+  waiting.set(name, data)
   timers.set(
     name,
-    setTimeout(() => void window.api.save(name, data), 250)
+    setTimeout(() => {
+      timers.delete(name)
+      waiting.delete(name)
+      void window.api.save(name, data)
+    }, 250)
   )
+}
+
+/** Save everything that is still waiting, now (before the app closes or updates). */
+export async function flushSaves(): Promise<void> {
+  const jobs: Promise<void>[] = []
+  for (const [name, data] of waiting) {
+    clearTimeout(timers.get(name))
+    timers.delete(name)
+    jobs.push(window.api.save(name, data))
+  }
+  waiting.clear()
+  await Promise.allSettled(jobs)
 }
 
 useApp.subscribe((state, prev) => {

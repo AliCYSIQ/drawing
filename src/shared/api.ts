@@ -7,7 +7,8 @@ import type {
   PinterestImport,
   PinterestProgress,
   Region,
-  StoreName
+  StoreName,
+  UpdateStatus
 } from './types'
 
 /** What the preload script exposes as `window.api`. */
@@ -77,6 +78,16 @@ export interface Api {
   openLog(): Promise<void>
   /** Write a page error to the app log. */
   log(level: 'warn' | 'error', message: string): void
+
+  /** Check GitHub Releases for a newer version; it downloads in the background. */
+  checkUpdates(): Promise<UpdateStatus>
+  updateStatus(): Promise<UpdateStatus>
+  onUpdateStatus(cb: (s: UpdateStatus) => void): () => void
+  /** Restart into the downloaded version (call after saving). */
+  installUpdate(): Promise<void>
+  /** The app is closing: save what is waiting, then call flushed(). */
+  onFlush(cb: () => void): () => void
+  flushed(): void
 }
 
 export interface AppInfo {
@@ -84,6 +95,8 @@ export interface AppInfo {
   electron: string
   chrome: string
   dataDir: string
+  /** GitHub releases page of the installed app; null when running from source. */
+  releasesUrl: string | null
 }
 
 export interface ProcessMetric {

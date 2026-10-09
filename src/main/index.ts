@@ -24,6 +24,7 @@ import {
 import { log, logFile, recentLog } from './log'
 import { dataDir, exportZip, load, save } from './store'
 import { migrateDataDir } from './migrate'
+import { attachUpdater, checkForUpdates, getUpdateStatus, installUpdate, releasesUrl } from './updater'
 import { loadWindowState, trackWindowState } from './windowState'
 
 // Tests point the app at a throwaway data folder.
@@ -60,7 +61,9 @@ function createWindow(): void {
     webPreferences: { preload }
   })
   attachFloat(main)
+  attachUpdater(main)
   trackWindowState(main, boundsBeforeFloat)
+  saveBeforeClose(main)
   main.once('ready-to-show', () => {
     if (saved?.maximized) main?.maximize()
     main?.show()
@@ -78,6 +81,28 @@ function createWindow(): void {
     if (!url.startsWith(process.env.ELECTRON_RENDERER_URL ?? 'file:')) e.preventDefault()
   })
   loadRenderer(main)
+}
+
+/**
+ * The page saves each change a moment after it happens. Before the window
+ * closes (or an update restarts the app), it gets a chance to save what is
+ * still waiting, so the last note or mark isn't lost.
+ */
+let savedBeforeClose = false
+function saveBeforeClose(w: BrowserWindow): void {
+  w.on('close', (e) => {
+    if (savedBeforeClose || w.webContents.isCrashed()) return
+    e.preventDefault()
+    const done = () => {
+      clearTimeout(timer)
+      ipcMain.removeListener('app:flushed', done)
+      savedBeforeClose = true
+      if (!w.isDestroyed()) w.close()
+    }
+    const timer = setTimeout(done, 2000)
+    ipcMain.once('app:flushed', done)
+    w.webContents.send('app:flush')
+  })
 }
 
 /** ref://image/?path=… serves a local image; ref://thumb/?path=…&size=… a cached thumbnail. */
@@ -190,7 +215,8 @@ function registerIpc(): void {
     version: app.getVersion(),
     electron: process.versions.electron,
     chrome: process.versions.chrome,
-    dataDir: dataDir()
+    dataDir: dataDir(),
+    releasesUrl: releasesUrl()
   }))
   handle('app:metrics', () =>
     app.getAppMetrics().map((m) => ({
@@ -201,6 +227,13 @@ function registerIpc(): void {
     }))
   )
   handle('app:recentLog', () => recentLog())
+  handle('update:check', () => checkForUpdates())
+  handle('update:status', () => getUpdateStatus())
+  handle('update:install', () => {
+    // The page saved everything before asking.
+    savedBeforeClose = true
+    installUpdate()
+  })
   ipcMain.on('app:log', (_e, level: unknown, message: unknown) => {
     if (level !== 'warn' && level !== 'error') return
     log(level, `Page: ${String(message).slice(0, 4000)}`)

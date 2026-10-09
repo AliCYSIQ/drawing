@@ -239,9 +239,21 @@ export type HotkeyAction = keyof Hotkeys
 /** What to do with sub-folders when adding a folder. 'ask' shows the choice each time. */
 export type FolderImport = 'ask' | 'one' | 'split' | 'top'
 
+/** Where the updater is; 'disabled' when running from source (not installed). */
+export interface UpdateStatus {
+  state: 'disabled' | 'idle' | 'checking' | 'none' | 'downloading' | 'ready' | 'error'
+  version?: string
+  /** Download progress, 0–100. */
+  percent?: number
+  error?: string
+  checkedAt?: number
+}
+
 export interface Settings {
   /** Format of the saved data; see SCHEMA_VERSION. */
   schemaVersion: number
+  /** Check for a new version a little after the app starts (default on). */
+  autoUpdate?: boolean
   theme: 'dark' | 'light' | 'system'
   folderImport: FolderImport
   /** Interface size: 1 = 100%. Ctrl + / - / 0 change it. */

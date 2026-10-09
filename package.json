@@ -1,7 +1,7 @@
 {
   "name": "drawing-practice",
   "productName": "Drawing Practice",
-  "version": "0.2.0",
+  "version": "0.2.5",
   "description": "Timed reference-drawing practice with review, challenges and a float-on-top mode.",
   "main": "./out/main/index.js",
   "author": "ilent0",
@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@fontsource-variable/schibsted-grotesk": "^5.3.0",
+    "electron-updater": "6.8.9",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "zustand": "^5.0.15"

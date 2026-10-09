@@ -54,7 +54,14 @@ const api: Api = {
   metrics: () => ipcRenderer.invoke('app:metrics'),
   recentLog: () => ipcRenderer.invoke('app:recentLog'),
   openLog: () => ipcRenderer.invoke('app:openLog'),
-  log: (level, message) => ipcRenderer.send('app:log', level, message)
+  log: (level, message) => ipcRenderer.send('app:log', level, message),
+
+  checkUpdates: () => ipcRenderer.invoke('update:check'),
+  updateStatus: () => ipcRenderer.invoke('update:status'),
+  onUpdateStatus: (cb) => on('update:status', cb),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onFlush: (cb) => on('app:flush', cb),
+  flushed: () => ipcRenderer.send('app:flushed')
 }
 
 contextBridge.exposeInMainWorld('api', api)
