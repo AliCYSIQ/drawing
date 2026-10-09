@@ -6,6 +6,7 @@ import { dirname, extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { FolderInfo, ImageRef, PinterestImport } from '@shared/types'
 import { fetchBoard, PINTEREST_UA, type PinImage } from './pinterest'
+import { timedSync } from './log'
 import { dataDir } from './store'
 
 export const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'])
@@ -159,18 +160,19 @@ export async function missingFiles(paths: string[]): Promise<string[]> {
 export async function keepReference(imageId: string, path: string): Promise<string | null> {
   const out = dataDir('kept', `${imageId.replace(/[^a-zA-Z0-9_-]/g, '')}.jpg`)
   if (existsSync(out)) return out
-  let img = nativeImage.createFromPath(path)
+  let img = timedSync('history copy read', () => nativeImage.createFromPath(path))
   if (img.isEmpty()) {
     // nativeImage only reads PNG/JPEG; Windows' thumbnailer handles WebP and the rest.
     img = await nativeImage.createThumbnailFromPath(path, { width: 1600, height: 1600 }).catch(() => nativeImage.createEmpty())
   }
   if (img.isEmpty()) return null
   const { width, height } = img.getSize()
-  if (Math.max(width, height) > 1600) {
-    img = width >= height ? img.resize({ width: 1600, quality: 'good' }) : img.resize({ height: 1600, quality: 'good' })
-  }
+  const jpeg = timedSync('history copy resize', () => {
+    const small = Math.max(width, height) <= 1600 ? img : width >= height ? img.resize({ width: 1600, quality: 'good' }) : img.resize({ height: 1600, quality: 'good' })
+    return small.toJPEG(88)
+  })
   await mkdir(dataDir('kept'), { recursive: true })
-  await writeFile(out, img.toJPEG(88))
+  await writeFile(out, jpeg)
   return out
 }
 
@@ -288,8 +290,10 @@ export async function thumbnail(path: string, size: number): Promise<string | nu
   try {
     img = await nativeImage.createThumbnailFromPath(path, { width: size, height: size })
   } catch {
-    const full = nativeImage.createFromPath(path)
-    if (!full.isEmpty()) img = full.resize({ width: Math.min(size, full.getSize().width), quality: 'good' })
+    img = timedSync('thumbnail fallback', () => {
+      const full = nativeImage.createFromPath(path)
+      return full.isEmpty() ? full : full.resize({ width: Math.min(size, full.getSize().width), quality: 'good' })
+    })
   }
   if (img.isEmpty()) return null
   await mkdir(dataDir('thumbs'), { recursive: true })

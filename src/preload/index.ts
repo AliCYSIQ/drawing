@@ -48,7 +48,13 @@ const api: Api = {
   regionDone: (rect) => ipcRenderer.send('region:done', rect),
 
   openDataFolder: () => ipcRenderer.invoke('data:open'),
-  exportBackup: () => ipcRenderer.invoke('data:export')
+  exportBackup: () => ipcRenderer.invoke('data:export'),
+
+  appInfo: () => ipcRenderer.invoke('app:info'),
+  metrics: () => ipcRenderer.invoke('app:metrics'),
+  recentLog: () => ipcRenderer.invoke('app:recentLog'),
+  openLog: () => ipcRenderer.invoke('app:openLog'),
+  log: (level, message) => ipcRenderer.send('app:log', level, message)
 }
 
 contextBridge.exposeInMainWorld('api', api)

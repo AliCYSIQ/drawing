@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { DEFAULT_HOTKEYS, type FolderImport, type HotkeyAction, type Settings as SettingsT, type Skill } from '@shared/types'
+import { Diagnostics } from '../components/Diagnostics'
 import { Trash } from '../components/Icons'
 import { Button, Field, IconButton, PageHeader, Segmented, Toggle } from '../components/ui'
 import { findSkill, normalizeSkillName } from '../lib/skills'
@@ -207,6 +208,10 @@ export function Settings() {
               Save a backup (.zip)
             </Button>
           </div>
+        </Field>
+
+        <Field label="Diagnostics" hint="How much CPU and memory the app uses, and problems it recorded. Useful if the app feels slow.">
+          <Diagnostics />
         </Field>
       </div>
     </div>

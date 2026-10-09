@@ -5,6 +5,7 @@ import { BrowserWindow, desktopCapturer, ipcMain, screen } from 'electron'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Region } from '@shared/types'
+import { timedSync } from './log'
 import { dataDir } from './store'
 
 /**
@@ -80,6 +81,7 @@ export async function captureRegion(region: Region, sessionId: string, index: nu
   const dir = sessionDir(sessionId)
   await mkdir(dir, { recursive: true })
   const file = join(dir, `${String(index + 1).padStart(3, '0')}.png`)
-  await writeFile(file, source.thumbnail.crop(crop).toPNG())
+  const png = timedSync('canvas capture encode', () => source.thumbnail.crop(crop).toPNG())
+  await writeFile(file, png)
   return file
 }

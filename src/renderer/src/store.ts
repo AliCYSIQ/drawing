@@ -259,7 +259,12 @@ export const useApp = create<State>((set, get) => ({
   },
 
   setFloat(patch) {
-    void window.api.setFloat({ ...get().float, ...patch })
+    // Shown at once; the main process answers with the state it applied.
+    // Without this, two quick changes could send the first one's old values.
+    const next = { ...get().float, ...patch }
+    next.clickThrough = next.on && next.clickThrough
+    set({ float: next })
+    void window.api.setFloat(next)
   },
 
   startRun({ plan, slots, challenge, redoOf }) {

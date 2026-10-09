@@ -67,6 +67,32 @@ export interface Api {
 
   openDataFolder(): Promise<void>
   exportBackup(): Promise<string | null>
+
+  /** Version numbers and where the data lives. */
+  appInfo(): Promise<AppInfo>
+  /** CPU and memory of each part of the app (main, page, GPU…). */
+  metrics(): Promise<ProcessMetric[]>
+  /** The last lines of the app log (crashes, hangs, slow work). */
+  recentLog(): Promise<string[]>
+  openLog(): Promise<void>
+  /** Write a page error to the app log. */
+  log(level: 'warn' | 'error', message: string): void
+}
+
+export interface AppInfo {
+  version: string
+  electron: string
+  chrome: string
+  dataDir: string
+}
+
+export interface ProcessMetric {
+  /** Browser = main process, Tab = the app's page, GPU… */
+  type: string
+  name: string
+  /** Percent of one CPU core since the last call. */
+  cpu: number
+  memoryMB: number
 }
 
 /** URL the renderer uses to show a local image. */

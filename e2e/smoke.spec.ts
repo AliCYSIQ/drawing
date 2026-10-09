@@ -128,7 +128,16 @@ test('ending a session from float mode with click-through leaves a normal window
   await page.getByRole('button', { name: /^Click-through/ }).click()
   await page.getByRole('button', { name: 'Keep on top' }).waitFor({ state: 'attached' })
   await expect(stage()).toHaveAttribute('data-controls', 'off')
-  expect(await windowState()).toMatchObject({ onTop: true, movable: false })
+  // Linux can't lock a window's position, so isMovable() stays true there.
+  expect(await windowState()).toMatchObject({ onTop: true, ...(process.platform === 'linux' ? {} : { movable: false }) })
+
+  // Turning click-through on and off fast (Ctrl+Alt+L) must not pile up work or lose the state.
+  const start = Date.now()
+  await page.evaluate(async () => {
+    for (let i = 0; i < 40; i++) await window.api.setFloat({ on: true, alwaysOnTop: true, opacity: 1, locked: true, clickThrough: i % 2 === 0 })
+  })
+  expect(Date.now() - start).toBeLessThan(5000)
+  await expect.poll(() => page.evaluate(() => document.querySelector('.stage')?.getAttribute('data-controls'))).toBe('off')
 
   await page.waitForTimeout(3500)
   await page.keyboard.press('Escape')

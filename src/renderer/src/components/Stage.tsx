@@ -115,6 +115,28 @@ function FloatBar() {
   const setFloat = useApp((s) => s.setFloat)
   const hotkey = useApp((s) => s.settings.hotkeys.clickThrough)
   const notify = useApp((s) => s.notify)
+  // While the slider moves it shows its own value, and the window gets at most
+  // one change per frame (each step used to be a full float update).
+  const [dragOpacity, setDragOpacity] = useState<number | null>(null)
+  const frame = useRef(0)
+  const pendingOpacity = useRef(float.opacity)
+  useEffect(() => () => cancelAnimationFrame(frame.current), [])
+  const changeOpacity = (value: number) => {
+    setDragOpacity(value)
+    pendingOpacity.current = value
+    if (frame.current) return
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0
+      setFloat({ opacity: pendingOpacity.current })
+    })
+  }
+  const endOpacity = () => {
+    if (dragOpacity === null) return
+    cancelAnimationFrame(frame.current)
+    frame.current = 0
+    setFloat({ opacity: pendingOpacity.current })
+    setDragOpacity(null)
+  }
 
   return (
     <div className="reveal absolute right-2 top-2 flex items-center gap-0.5 rounded-lg bg-surface/95 p-1 ring-1 ring-line" data-no-drag>
@@ -127,8 +149,11 @@ function FloatBar() {
           type="range"
           min={20}
           max={100}
-          value={Math.round(float.opacity * 100)}
-          onChange={(e) => setFloat({ opacity: Number(e.target.value) / 100 })}
+          value={Math.round((dragOpacity ?? float.opacity) * 100)}
+          onChange={(e) => changeOpacity(Number(e.target.value) / 100)}
+          onPointerUp={endOpacity}
+          onKeyUp={endOpacity}
+          onBlur={endOpacity}
           className="h-1 w-20 accent-[var(--blue)]"
         />
       </label>

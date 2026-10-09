@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MISTAKES, type Stroke } from '@shared/types'
 import { Float, Flip, Grey, Pause, Play, Redo, Stop } from '../components/Icons'
 import { Compare, drawingSources, type DrawingSource } from '../components/Compare'
+import { ProgressLine } from '../components/ProgressLine'
 import { Stage } from '../components/Stage'
 import { Button, IconButton } from '../components/ui'
 import {
@@ -81,17 +82,20 @@ export function MemorySession() {
     }
   }, [])
 
+  /** `refresh` false: the clock ticking; the page only redraws when the shown second or the phase changes. */
   const apply = useCallback(
-    (fn: (s: MemoryState, now: number) => MemoryStep) => {
+    (fn: (s: MemoryState, now: number) => MemoryStep, refresh = true) => {
       const r = useApp.getState().run
       if (!r?.memory || r.memory.phase === 'done') return
       const step = fn(r.memory, Date.now())
-      if (step.state !== r.memory) useApp.getState().setMemory(step.state)
+      const changed = step.state !== r.memory
+      if (changed) useApp.getState().setMemory(step.state)
       handleEvents(step.events)
-      setNow(Date.now())
+      if (refresh || changed) setNow(Date.now())
     },
     [handleEvents]
   )
+  const shownSecond = useRef('')
 
   /** Continue from the reveal; marks and notes are already saved on the attempt as you make them. */
   const leaveReveal = useCallback(
@@ -106,7 +110,19 @@ export function MemorySession() {
   )
 
   useEffect(() => {
-    const id = setInterval(() => apply(memoryTick), 100)
+    const id = setInterval(() => {
+      apply(memoryTick, false)
+      const m = useApp.getState().run?.memory
+      if (!m) return
+      const t = Date.now()
+      const left = memoryRemaining(m, t)
+      const second = left === null ? Math.floor(memoryElapsed(m, t) / 1000) : Math.ceil(left / 1000)
+      const key = `${m.index}-${m.attempt}-${m.phase}-${m.paused}-${second}`
+      if (key !== shownSecond.current) {
+        shownSecond.current = key
+        setNow(t)
+      }
+    }, 100)
     return () => clearInterval(id)
   }, [apply])
 
@@ -156,7 +172,6 @@ export function MemorySession() {
   const left = memoryRemaining(m, now)
   const shown = left ?? memoryElapsed(m, now)
   const duration = memoryDuration(m)
-  const progress = duration ? Math.min(1, memoryElapsed(m, now) / duration) : 0
   const urgent = left !== null && left <= 5000
   // "Line only" hides the numbers while the progress line shows the time; an untimed drawing still counts up.
   const showClock = timerDisplay === 'clock' || left === null
@@ -213,11 +228,7 @@ export function MemorySession() {
               {clock(shown, true)}
             </div>
           )}
-          {duration > 0 && (
-            <div className="absolute inset-x-0 bottom-0 h-[3px] bg-line/60">
-              <div className={`h-full ${urgent ? 'bg-red' : 'bg-blue'}`} style={{ width: `${progress * 100}%` }} />
-            </div>
-          )}
+          <ProgressLine carried={m.carried} phaseStart={m.phaseStart} paused={m.paused} durationMs={duration} urgent={urgent} />
         </>
       }
     >

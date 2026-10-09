@@ -1,10 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, powerSaveBlocker, protocol, shell } from 'electron'
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, net, powerSaveBlocker, protocol, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { FloatState, Hotkeys, ImageRef, Region, StoreName } from '@shared/types'
+import { DEFAULT_FLOAT, type FloatState, type Hotkeys, type ImageRef, type Region, type StoreName } from '@shared/types'
 import { captureRegion, pickRegion } from './capture'
-import { attachFloat, boundsBeforeFloat, setFloat, setHotkeys, setSessionActive } from './float'
+import { attachFloat, boundsBeforeFloat, getFloat, setFloat, setHotkeys, setSessionActive } from './float'
 import {
   copyImages,
   importBytes,
@@ -21,12 +21,18 @@ import {
   scanFolder,
   thumbnail
 } from './library'
+import { log, logFile, recentLog } from './log'
 import { dataDir, exportZip, load, save } from './store'
 import { migrateDataDir } from './migrate'
 import { loadWindowState, trackWindowState } from './windowState'
 
 // Tests point the app at a throwaway data folder.
 if (process.env.DRAWING_DATA_DIR) app.setPath('userData', process.env.DRAWING_DATA_DIR)
+
+// Crash dumps stay on this computer (userData/Crashpad); the log says which part crashed.
+crashReporter.start({ uploadToServer: false })
+process.on('uncaughtException', (err) => log('error', `Main process: ${err.stack ?? err.message}`))
+process.on('unhandledRejection', (err) => log('error', `Main process (promise): ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`))
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'ref', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -59,6 +65,8 @@ function createWindow(): void {
     if (saved?.maximized) main?.maximize()
     main?.show()
   })
+  main.on('unresponsive', () => log('warn', `Window stopped responding (float ${JSON.stringify(getFloat())})`))
+  main.on('responsive', () => log('info', 'Window responds again'))
   main.on('maximize', () => main?.webContents.send('window:maximized', true))
   main.on('unmaximize', () => main?.webContents.send('window:maximized', false))
   // Links open in the real browser, never inside the app.
@@ -177,6 +185,26 @@ function registerIpc(): void {
   })
 
   handle('data:open', () => shell.openPath(dataDir()).then(() => undefined))
+  handle('app:openLog', () => shell.openPath(logFile()).then(() => undefined))
+  handle('app:info', () => ({
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    dataDir: dataDir()
+  }))
+  handle('app:metrics', () =>
+    app.getAppMetrics().map((m) => ({
+      type: m.type,
+      name: m.name ?? m.serviceName ?? '',
+      cpu: Math.round(m.cpu.percentCPUUsage * 10) / 10,
+      memoryMB: Math.round(m.memory.workingSetSize / 1024)
+    }))
+  )
+  handle('app:recentLog', () => recentLog())
+  ipcMain.on('app:log', (_e, level: unknown, message: unknown) => {
+    if (level !== 'warn' && level !== 'error') return
+    log(level, `Page: ${String(message).slice(0, 4000)}`)
+  })
   handle('data:export', async () => {
     const stamp = new Date().toISOString().slice(0, 10)
     const r = await dialog.showSaveDialog(main!, {
@@ -186,6 +214,22 @@ function registerIpc(): void {
     if (r.canceled || !r.filePath) return null
     await exportZip(r.filePath)
     return r.filePath
+  })
+}
+
+/** Log crashes of any part of the app; if the page itself crashed, bring it back in a normal window. */
+function watchCrashes(): void {
+  app.on('child-process-gone', (_e, d) => {
+    log('error', `${d.type} process gone: ${d.reason} (exit code ${d.exitCode}${d.name ? `, ${d.name}` : ''})`)
+  })
+  app.on('render-process-gone', (_e, wc, d) => {
+    log('error', `Page process gone: ${d.reason} (exit code ${d.exitCode})`)
+    if (!main || main.isDestroyed() || wc !== main.webContents || d.reason === 'clean-exit') return
+    // A crashed page under click-through would leave an invisible window that ignores the mouse.
+    setFloat({ ...DEFAULT_FLOAT, ...getFloat(), on: false, clickThrough: false })
+    setSessionActive(false)
+    keepAwake(false)
+    loadRenderer(main)
   })
 }
 
@@ -221,6 +265,7 @@ if (!single) {
     }
     registerProtocol()
     registerIpc()
+    watchCrashes()
     createWindow()
   })
   app.on('window-all-closed', () => app.quit())

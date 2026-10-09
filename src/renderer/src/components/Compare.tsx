@@ -193,7 +193,7 @@ export function Compare({
                 label={penOn ? `${source.label}: draw on it to mark what is off` : source.label}
                 src={imageUrl(source.path)}
                 strokes={strokes}
-                onStrokes={penOn ? (s) => onMarks(source.path, s) : undefined}
+                onAdd={penOn ? (s) => onMarks(source.path, [...strokes, s]) : undefined}
                 legacyMarkup={source.legacyMarkup}
               />
             ) : onAddPhotos ? (
@@ -222,13 +222,13 @@ function ZoomPane({
   label,
   src,
   strokes,
-  onStrokes,
+  onAdd,
   legacyMarkup
 }: {
   label: string
   src: string
   strokes?: Stroke[]
-  onStrokes?: (s: Stroke[]) => void
+  onAdd?: (s: Stroke) => void
   legacyMarkup?: string
 }) {
   const { view, handlers, reset } = usePanZoom()
@@ -241,7 +241,7 @@ function ZoomPane({
         title="Scroll to zoom, drag to move, double-click to reset"
       >
         <div className="absolute inset-0" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
-          <MarkupImage src={src} alt={label} strokes={strokes} onChange={onStrokes} savedMarkup={legacyMarkup} />
+          <MarkupImage src={src} alt={label} strokes={strokes} onAdd={onAdd} savedMarkup={legacyMarkup} />
         </div>
       </div>
       <figcaption className="pt-1.5 text-center text-[12.5px] text-muted">{label}</figcaption>

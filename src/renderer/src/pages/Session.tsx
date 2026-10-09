@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Back, Float, Flip, Grey, Next, Pause, Play, Refresh, Stop } from '../components/Icons'
+import { ProgressLine } from '../components/ProgressLine'
 import { Stage } from '../components/Stage'
 import { IconButton } from '../components/ui'
 import {
@@ -54,14 +55,16 @@ export function Session() {
     }
   }, [])
 
+  /** `refresh` false: the clock ticking; the page only redraws when the shown second or the pose changes. */
   const apply = useCallback(
-    (fn: (now: number) => Step) => {
+    (fn: (now: number) => Step, refresh = true) => {
       const r = useApp.getState().run
       if (!r || r.engine.phase === 'done') return
       const step = fn(Date.now())
-      if (step.state !== r.engine) useApp.getState().setEngine(step.state)
+      const changed = step.state !== r.engine
+      if (changed) useApp.getState().setEngine(step.state)
       handleEvents(step.events)
-      setNow(Date.now())
+      if (refresh || changed) setNow(Date.now())
     },
     [handleEvents]
   )
@@ -71,6 +74,7 @@ export function Session() {
   const doStop = useCallback(() => apply((t) => stop(useApp.getState().run!.engine, t)), [apply])
   const doRestart = useCallback(() => apply((t) => ({ state: restart(useApp.getState().run!.engine, t), events: [] })), [apply])
   const lastTick = useRef<string>('')
+  const shownSecond = useRef('')
   const doPause = useCallback(() => {
     const r = useApp.getState().run
     if (!r || r.engine.phase === 'done') return
@@ -80,7 +84,18 @@ export function Session() {
   // The clock: check the engine ten times a second.
   useEffect(() => {
     const id = setInterval(() => {
-      apply((t) => tick(useApp.getState().run!.engine, t))
+      apply((t) => tick(useApp.getState().run!.engine, t), false)
+      const cur = useApp.getState().run?.engine
+      if (cur) {
+        const t = Date.now()
+        const left = remaining(cur, t)
+        const second = left === null ? Math.floor(elapsed(cur, t) / 1000) : Math.ceil(left / 1000)
+        const key = `${cur.index}-${cur.phase}-${cur.paused}-${second}`
+        if (key !== shownSecond.current) {
+          shownSecond.current = key
+          setNow(t)
+        }
+      }
       // Optional soft ticks in the last 3 seconds of a timed pose (10 s or longer).
       const { run: r, settings } = useApp.getState()
       if (!r || !settings.sound || !settings.countdownTicks) return
@@ -124,7 +139,6 @@ export function Session() {
   const slot = e.slots[Math.min(e.index, e.slots.length - 1)]
   const left = remaining(e, now)
   const duration = phaseDuration(e)
-  const progress = duration ? Math.min(1, elapsed(e, now) / duration) : 0
   const urgent = left !== null && left <= 5000 && e.phase === 'pose'
   const resting = e.phase === 'rest'
   const shownMs = left ?? elapsed(e, now)
@@ -168,14 +182,7 @@ export function Session() {
               {resting ? 'Rest' : `Pose ${e.index + 1} of ${e.slots.length}`}
             </div>
           )}
-          {duration > 0 && (
-            <div className="absolute inset-x-0 bottom-0 h-[3px] bg-line/60">
-              <div
-                className={`h-full ${urgent ? 'bg-red' : 'bg-blue'}`}
-                style={{ width: `${progress * 100}%` }}
-              />
-            </div>
-          )}
+          <ProgressLine carried={e.carried} phaseStart={e.phaseStart} paused={e.paused} durationMs={duration} urgent={urgent} />
         </>
       }
     >
