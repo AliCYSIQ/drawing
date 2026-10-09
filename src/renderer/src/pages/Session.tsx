@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Back, Float, Flip, Grey, Next, Pause, Play, Stop } from '../components/Icons'
+import { Back, Float, Flip, Grey, Next, Pause, Play, Refresh, Stop } from '../components/Icons'
 import { Stage } from '../components/Stage'
 import { IconButton } from '../components/ui'
 import {
   back,
+  restart,
   elapsed,
   next,
   phaseDuration,
@@ -19,6 +20,7 @@ import { useApp } from '../store'
 
 export function Session() {
   const run = useApp((s) => s.run)
+  const timerDisplay = useApp((s) => s.settings.timerDisplay)
   const float = useApp((s) => s.float)
   const setFloat = useApp((s) => s.setFloat)
   const [now, setNow] = useState(() => Date.now())
@@ -67,6 +69,8 @@ export function Session() {
   const doNext = useCallback(() => apply((t) => next(useApp.getState().run!.engine, t)), [apply])
   const doBack = useCallback(() => apply((t) => back(useApp.getState().run!.engine, t)), [apply])
   const doStop = useCallback(() => apply((t) => stop(useApp.getState().run!.engine, t)), [apply])
+  const doRestart = useCallback(() => apply((t) => ({ state: restart(useApp.getState().run!.engine, t), events: [] })), [apply])
+  const lastTick = useRef<string>('')
   const doPause = useCallback(() => {
     const r = useApp.getState().run
     if (!r || r.engine.phase === 'done') return
@@ -75,7 +79,21 @@ export function Session() {
 
   // The clock: check the engine ten times a second.
   useEffect(() => {
-    const id = setInterval(() => apply((t) => tick(useApp.getState().run!.engine, t)), 100)
+    const id = setInterval(() => {
+      apply((t) => tick(useApp.getState().run!.engine, t))
+      // Optional soft ticks in the last 3 seconds of a timed pose (10 s or longer).
+      const { run: r, settings } = useApp.getState()
+      if (!r || !settings.sound || !settings.countdownTicks) return
+      const e = r.engine
+      const left = remaining(e, Date.now())
+      if (e.phase !== 'pose' || e.paused || left === null || phaseDuration(e) < 10_000) return
+      const sec = Math.ceil(left / 1000)
+      const key = `${e.index}-${sec}`
+      if (sec >= 1 && sec <= 3 && lastTick.current !== key) {
+        lastTick.current = key
+        chime('tick')
+      }
+    }, 100)
     return () => clearInterval(id)
   }, [apply])
 
@@ -92,12 +110,13 @@ export function Session() {
       } else if (e.key === 'ArrowRight') doNext()
       else if (e.key === 'ArrowLeft') doBack()
       else if (e.key === 'Escape') doStop()
+      else if (e.key.toLowerCase() === 'r') doRestart()
       else if (e.key.toLowerCase() === 'f') setFlip((v) => !v)
       else if (e.key.toLowerCase() === 'g') setGrey((v) => !v)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [doPause, doNext, doBack, doStop])
+  }, [doPause, doNext, doBack, doStop, doRestart])
 
   if (!run) return null
   const e = run.engine
@@ -108,6 +127,8 @@ export function Session() {
   const urgent = left !== null && left <= 5000 && e.phase === 'pose'
   const resting = e.phase === 'rest'
   const shownMs = left ?? elapsed(e, now)
+  // "Line only" hides the numbers during poses; the progress line still shows the time.
+  const showClock = timerDisplay === 'clock' || resting || left === null
 
   return (
     <Stage
@@ -131,14 +152,16 @@ export function Session() {
               <div className="rounded-md bg-surface px-4 py-2 text-[15px] ring-1 ring-line">Paused. Press space to go on.</div>
             </div>
           )}
-          <div
-            className={`tnum pointer-events-none absolute bottom-3 right-4 font-semibold leading-none tracking-[-0.03em] drop-shadow-[0_1px_8px_rgba(0,0,0,0.45)] transition-colors ${
-              urgent ? 'text-red' : 'text-ink'
-            } ${float.on ? 'text-[26px]' : 'text-[44px]'}`}
-            aria-live="off"
-          >
-            {clock(shownMs, left !== null)}
-          </div>
+          {showClock && (
+            <div
+              className={`tnum pointer-events-none absolute bottom-3 right-4 font-semibold leading-none tracking-[-0.03em] drop-shadow-[0_1px_8px_rgba(0,0,0,0.45)] transition-colors ${
+                urgent ? 'text-red' : 'text-ink'
+              } ${float.on ? 'text-[26px]' : 'text-[44px]'}`}
+              aria-live="off"
+            >
+              {clock(shownMs, left !== null)}
+            </div>
+          )}
           {!float.on && (
             <div className="pointer-events-none absolute left-4 top-3 text-muted">
               {resting ? 'Rest' : `Pose ${e.index + 1} of ${e.slots.length}`}
@@ -160,6 +183,9 @@ export function Session() {
       </IconButton>
       <IconButton label={e.paused ? 'Go on (space)' : 'Pause (space)'} onClick={doPause}>
         {e.paused ? <Play size={17} /> : <Pause size={17} />}
+      </IconButton>
+      <IconButton label="Restart this pose (R)" onClick={doRestart} disabled={resting}>
+        <Refresh size={17} />
       </IconButton>
       <IconButton label={resting ? 'Skip rest (→)' : 'Next pose (→)'} onClick={doNext}>
         <Next size={17} />

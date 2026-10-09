@@ -100,6 +100,12 @@ export interface SessionPlan {
   memory: MemoryOptions
   shuffle: boolean
   rest: { enabled: boolean; seconds: number }
+  /** Class mode: a longer break between blocks, in seconds; 0 = none. */
+  blockRest?: number
+  /** Images drawn in the last 7 days come after fresh ones. */
+  freshFirst?: boolean
+  /** Only images marked as favorites. */
+  favoritesOnly?: boolean
   review: boolean
   /** Capture the Clip Studio canvas region at the end of each pose. */
   capture: boolean
@@ -231,6 +237,10 @@ export interface Settings {
   /** Interface size: 1 = 100%. Ctrl + / - / 0 change it. */
   uiScale: number
   sound: boolean
+  /** Short ticks in the last 3 seconds of a pose. */
+  countdownTicks: boolean
+  /** Numbers and line, or only the progress line (calmer). */
+  timerDisplay: 'clock' | 'line'
   hotkeys: Hotkeys
   captureRegion?: Region
   float: FloatState
@@ -258,6 +268,8 @@ export const DEFAULT_SETTINGS: Settings = {
   folderImport: 'ask',
   uiScale: 1,
   sound: true,
+  countdownTicks: false,
+  timerDisplay: 'clock',
   hotkeys: DEFAULT_HOTKEYS,
   float: DEFAULT_FLOAT
 }
@@ -276,6 +288,9 @@ export const DEFAULT_PLAN: SessionPlan = {
   memory: { studySeconds: 60, drawSeconds: 180, attempts: 3 },
   shuffle: true,
   rest: { enabled: false, seconds: 5 },
+  blockRest: 0,
+  freshFirst: true,
+  favoritesOnly: false,
   review: true,
   capture: false
 }

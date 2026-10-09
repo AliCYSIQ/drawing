@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { Block, SessionMode, SessionPlan } from '@shared/types'
+import { DEFAULT_PLAN, type Block, type SessionMode, type SessionPlan } from '@shared/types'
 import { BoardPicker } from '../components/BoardPicker'
 import { Plus, Trash } from '../components/Icons'
 import { Button, Field, IconButton, NumberField, Segmented, Toggle } from '../components/ui'
@@ -10,6 +10,7 @@ import {
   formatDuration,
   planBlocks,
   poolFromBoards,
+  recentlySeen,
   slotsForPlan
 } from '../lib/schedule'
 import { currentStreak, dayKey, minutesByDay, recentMistakes } from '../lib/stats'
@@ -36,13 +37,23 @@ export function Practice() {
   const setPlan = (patch: Partial<SessionPlan>) => setPlanState((p) => ({ ...p, ...patch }))
 
   const missing = useApp((s) => s.missing)
+  const favoriteImages = useApp((s) => s.library.favoriteImages)
   const allImages = useMemo(() => poolFromBoards(boards, plan.boardIds), [boards, plan.boardIds])
   // Images whose file is gone are skipped.
-  const pool = useMemo(() => availablePool({ boards, missing }, allImages), [boards, missing, allImages])
-  const skipped = allImages.length - pool.length
+  const available = useMemo(() => availablePool({ boards, missing }, allImages), [boards, missing, allImages])
+  const skipped = allImages.length - available.length
+  const favoritesHere = useMemo(() => {
+    const fav = new Set(favoriteImages)
+    return available.filter((i) => fav.has(i.id))
+  }, [available, favoriteImages])
+  const pool = plan.favoritesOnly ? favoritesHere : available
   const blocks = planBlocks(plan, pool.length)
   const poses = blocks.reduce((a, b) => a + b.count, 0)
-  const seconds = estimateSeconds(blocks, plan.rest.enabled ? plan.rest.seconds : 0)
+  const seconds = estimateSeconds(
+    blocks,
+    plan.rest.enabled ? plan.rest.seconds : 0,
+    plan.mode === 'class' ? (plan.blockRest ?? 0) : 0
+  )
   const mistakes = useMemo(() => recentMistakes(sessions).slice(0, 2), [sessions])
   const byDay = useMemo(() => minutesByDay(sessions), [sessions])
   const today = Math.round(byDay.get(dayKey(Date.now())) ?? 0)
@@ -50,7 +61,7 @@ export function Practice() {
   const needsRegion = plan.capture && !settings.captureRegion
 
   const start = () => {
-    const slots = slotsForPlan(plan, pool)
+    const slots = slotsForPlan(plan, pool, Math.random, recentlySeen(sessions, Date.now()))
     if (!slots.length) return
     startRun({ plan, slots })
   }
@@ -132,6 +143,18 @@ export function Practice() {
           {plan.mode === 'class' && (
             <Field label="Blocks" hint="Poses get longer as the session goes on, like a life-drawing class.">
               <BlocksEditor blocks={plan.blocks} onChange={(b) => setPlan({ blocks: b })} />
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-muted">
+                Break between blocks
+                <NumberField
+                  label="Break between blocks, seconds"
+                  value={plan.blockRest ?? 0}
+                  min={0}
+                  max={1800}
+                  suffix="s"
+                  onChange={(blockRest) => setPlan({ blockRest })}
+                />
+                <span className="text-[12.5px]">0 = none. A longer pause before the poses get longer.</span>
+              </div>
             </Field>
           )}
 
@@ -153,6 +176,22 @@ export function Practice() {
           <Field label="Options">
             <div className="grid gap-3.5">
               <Toggle checked={plan.shuffle} onChange={(shuffle) => setPlan({ shuffle })} label="Shuffle" />
+              <Toggle
+                checked={plan.freshFirst !== false}
+                onChange={(freshFirst) => setPlan({ freshFirst })}
+                label="Fresh images first"
+                hint="Images you drew in the last 7 days come after ones you haven’t."
+              />
+              <Toggle
+                checked={!!plan.favoritesOnly}
+                onChange={(favoritesOnly) => setPlan({ favoritesOnly })}
+                label="Favorites only"
+                hint={
+                  favoritesHere.length
+                    ? `${favoritesHere.length} favorite ${favoritesHere.length === 1 ? 'image' : 'images'} in these boards.`
+                    : 'No favorites in these boards yet: star images in the Library.'
+                }
+              />
               <div className={`flex flex-wrap items-center gap-3 ${plan.mode === 'memory' ? 'hidden' : ''}`}>
                 <Toggle
                   checked={plan.rest.enabled}
@@ -203,7 +242,7 @@ export function Practice() {
                     className="h-8 pl-3 pr-1.5 text-[13px] text-ink hover:text-blue"
                     onClick={() => {
                       const known = p.plan.boardIds.filter((id) => boards.some((b) => b.id === id))
-                      setPlanState({ ...p.plan, boardIds: known })
+                      setPlanState({ ...DEFAULT_PLAN, ...p.plan, boardIds: known })
                     }}
                   >
                     {p.name}

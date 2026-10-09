@@ -99,8 +99,28 @@ export function Settings() {
           </select>
         </Field>
 
+        <Field label="Timer" hint="Some find a counting clock stressful; the line at the bottom still shows how much time is left.">
+          <Segmented<SettingsT['timerDisplay']>
+            label="Timer"
+            value={settings.timerDisplay}
+            onChange={(timerDisplay) => updateSettings({ timerDisplay })}
+            options={[
+              { value: 'clock', label: 'Numbers and line' },
+              { value: 'line', label: 'Line only' }
+            ]}
+          />
+        </Field>
+
         <Field label="Sound">
-          <Toggle checked={settings.sound} onChange={(sound) => updateSettings({ sound })} label="Chime when a pose ends" />
+          <div className="grid gap-3">
+            <Toggle checked={settings.sound} onChange={(sound) => updateSettings({ sound })} label="Chime when a pose ends" />
+            <Toggle
+              checked={settings.countdownTicks}
+              onChange={(countdownTicks) => updateSettings({ countdownTicks })}
+              label="Soft ticks in the last 3 seconds"
+              hint="Only for poses of 10 seconds or more, and only with sound on."
+            />
+          </div>
         </Field>
 
         <Field label="Canvas area" hint="The part of the screen captured at the end of each pose, when capture is on.">

@@ -6,6 +6,7 @@ import {
   next,
   pause,
   remaining,
+  restart,
   resume,
   stop,
   tick,
@@ -90,6 +91,34 @@ describe('session engine', () => {
     s = back(s, 11_000).state
     expect(s.phase).toBe('pose')
     expect(s.index).toBe(0)
+  })
+
+  it('a pose can rest longer than the others (a break between class blocks)', () => {
+    const list = slots([10, 10, 10])
+    list[0].restAfter = 30
+    let s = createEngine(list, 5, 0)
+    s = tick(s, 10_000).state
+    expect(s.phase).toBe('rest')
+    expect(remaining(s, 10_000)).toBe(30_000)
+    s = tick(s, 40_000).state
+    s = tick(s, 50_000).state
+    expect(s.phase).toBe('rest')
+    expect(remaining(s, 50_000)).toBe(5_000)
+  })
+
+  it('a pose can rest less than the session rest (0 = straight on)', () => {
+    const list = slots([10, 10])
+    list[0].restAfter = 0
+    const s = tick(createEngine(list, 5, 0), 10_000).state
+    expect(s).toMatchObject({ phase: 'pose', index: 1 })
+  })
+
+  it('restart gives the same pose a full timer and keeps the time spent', () => {
+    let s = createEngine(slots([30, 30]), 0, 0)
+    s = restart(s, 20_000)
+    expect(s.index).toBe(0)
+    expect(remaining(s, 20_000)).toBe(30_000)
+    expect(s.spent[0]).toBe(20_000)
   })
 
   it('stop ends early and reports an unfinished session', () => {
