@@ -11,7 +11,11 @@ A Windows desktop app for timed reference drawing, drawing from memory, review, 
   - **Class:** blocks of poses that get longer.
   - **Relaxed:** no timer.
   - **Memory:** study the reference, it hides, you draw it from memory, then reveal it and mark the differences in red. Then draw it again.
-- **Options:** shuffle, rest between pictures (seconds or minutes), review afterwards, and capture of your Clip Studio canvas at the end of each pose.
+- **Options:**
+  - shuffle, fresh images first (ones you haven't drawn in the last 7 days), favorites only
+  - rest between pictures (seconds or minutes), and a longer break between class blocks
+  - review afterwards, and capture of your Clip Studio canvas at the end of each pose
+- **During a session:** space pauses, ← and → move between poses, R restarts the pose, F flips, G turns it grey, Esc ends. Settings can hide the clock (the progress line stays) and add soft ticks in the last 3 seconds.
 - **Review:** each reference again, next to your captured drawing (side by side or overlay) or a photo of your paper page. Tag mistakes, write a note, and flag poses to redo. The practice screen reminds you of your most common recent mistakes.
 - **Float mode (borderless, on top):** the float button in a session or the image viewer, or `Ctrl+Alt+F` from anywhere.
   - Options: keep on top, opacity, lock and click-through.

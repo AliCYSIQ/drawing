@@ -29,6 +29,7 @@ import { useApp } from '../store'
  */
 export function MemorySession() {
   const run = useApp((s) => s.run)
+  const timerDisplay = useApp((s) => s.settings.timerDisplay)
   const float = useApp((s) => s.float)
   const setFloat = useApp((s) => s.setFloat)
   const [now, setNow] = useState(() => Date.now())
@@ -157,6 +158,8 @@ export function MemorySession() {
   const duration = memoryDuration(m)
   const progress = duration ? Math.min(1, memoryElapsed(m, now) / duration) : 0
   const urgent = left !== null && left <= 5000
+  // "Line only" hides the numbers while the progress line shows the time; an untimed drawing still counts up.
+  const showClock = timerDisplay === 'clock' || left === null
 
   if (m.phase === 'reveal' || m.phase === 'done') {
     return <Reveal leave={leaveReveal} />
@@ -180,9 +183,11 @@ export function MemorySession() {
               <div className={float.on ? 'text-[13px] text-muted' : 'text-[15px] text-muted'}>
                 The reference is hidden. Draw what you remember.
               </div>
-              <div className={`tnum font-semibold leading-none tracking-[-0.03em] ${urgent ? 'text-red' : ''} ${float.on ? 'text-[36px]' : 'text-[72px]'}`}>
-                {clock(shown, left !== null)}
-              </div>
+              {showClock && (
+                <div className={`tnum font-semibold leading-none tracking-[-0.03em] ${urgent ? 'text-red' : ''} ${float.on ? 'text-[36px]' : 'text-[72px]'}`}>
+                  {clock(shown, left !== null)}
+                </div>
+              )}
               <Button tone="primary" onClick={() => apply(memoryAdvance)}>
                 Reveal (Enter)
               </Button>
@@ -199,7 +204,7 @@ export function MemorySession() {
             </div>
           )}
           {!float.on && <div className="pointer-events-none absolute left-4 top-3 text-muted">{label}</div>}
-          {studying && (
+          {studying && showClock && (
             <div
               className={`tnum pointer-events-none absolute bottom-3 right-4 font-semibold leading-none tracking-[-0.03em] drop-shadow-[0_1px_8px_rgba(0,0,0,0.45)] ${
                 urgent ? 'text-red' : 'text-ink'

@@ -82,6 +82,12 @@ test('R restarts the pose; "line only" hides the numbers', async () => {
 })
 
 test('favorites only uses just the starred images', async () => {
+  // No favorites yet: nothing to start, and the summary says why.
+  await practice()
+  await page.getByRole('switch', { name: /Favorites only/ }).click()
+  await expect(page.getByText(/Star images in the Library, or turn off Favorites only/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start drawing' })).toBeDisabled()
+
   await page.getByRole('button', { name: 'Library' }).click()
   await page.getByRole('button', { name: /^refs-/ }).click()
   await page.getByRole('button', { name: 'Open image 1' }).hover()

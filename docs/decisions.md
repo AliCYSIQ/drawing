@@ -28,6 +28,14 @@ There is a "Remember my choice" option.
 
 **Folders of collections.** Each collection has one home folder and can appear in other folders as a shortcut. Removing a shortcut never deletes the collection. The fixed categories become free tags.
 
+**Sessions.** Small additions that help while drawing, without new screens:
+- **A break between class blocks** (seconds, 0 = none), on top of the usual rest between pictures.
+- **Restart the pose (R)**: the timer starts again; the time already spent still counts.
+- **Line-only timer** (Settings): hides the numbers during poses, in memory mode too; the progress line still shows the time. A counting clock can feel stressful.
+- **Soft ticks in the last 3 seconds** (Settings, off by default): only for poses of 10 seconds or more, and only with sound on.
+- **Fresh images first** (on by default): images drawn in the last 7 days come after the ones you haven't drawn. They are moved back, not removed, so small boards still work.
+- **Favorites only**: uses just the starred images of the chosen boards.
+
 **Skills (light).** A skill list you edit yourself. Sessions, presets and challenges can be tagged with a skill, and Stats show time and sessions per skill. There are no goals or schedules: this isn't a planner.
 
 **Storage stays JSON for now**, with a `schemaVersion`. Before any format change, the data folder is backed up to `data/backups/`.

@@ -304,7 +304,13 @@ export function Practice() {
           <Button tone="primary" className="mt-5 h-11 w-full text-[14px]" disabled={!pool.length || needsRegion} onClick={start}>
             Start drawing
           </Button>
-          {!pool.length && <p className="mt-2.5 text-[12.5px] text-muted">Pick at least one board with images.</p>}
+          {!pool.length && (
+            <p className="mt-2.5 text-[12.5px] text-muted">
+              {plan.favoritesOnly && available.length
+                ? 'No favorites in these boards. Star images in the Library, or turn off Favorites only.'
+                : 'Pick at least one board with images.'}
+            </p>
+          )}
           {skipped > 0 && (
             <p className="mt-2.5 text-[12.5px] text-muted">
               {skipped} {skipped === 1 ? 'image is' : 'images are'} missing on disk and will be skipped.
