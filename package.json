@@ -1,7 +1,7 @@
 {
   "name": "drawing-practice",
   "productName": "Drawing Practice",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Timed reference-drawing practice with review, challenges and a float-on-top mode.",
   "main": "./out/main/index.js",
   "author": "ilent0",
