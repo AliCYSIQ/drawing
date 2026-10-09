@@ -50,6 +50,11 @@ export function Practice() {
     return available.filter((i) => fav.has(i.id))
   }, [available, favoriteImages])
   const pool = plan.favoritesOnly ? favoritesHere : available
+  const missingHere = useMemo(() => {
+    if (!plan.favoritesOnly) return skipped
+    const fav = new Set(favoriteImages)
+    return allImages.filter((i) => fav.has(i.id)).length - favoritesHere.length
+  }, [plan.favoritesOnly, skipped, favoriteImages, allImages, favoritesHere])
   const blocks = planBlocks(plan, pool.length)
   const poses = blocks.reduce((a, b) => a + b.count, 0)
   const seconds = estimateSeconds(
@@ -319,9 +324,9 @@ export function Practice() {
                 : 'Pick at least one board with images.'}
             </p>
           )}
-          {skipped > 0 && (
+          {missingHere > 0 && (
             <p className="mt-2.5 text-[12.5px] text-muted">
-              {skipped} {skipped === 1 ? 'image is' : 'images are'} missing on disk and will be skipped.
+              {missingHere} {missingHere === 1 ? 'image is' : 'images are'} missing on disk and will be skipped.
             </p>
           )}
           {needsRegion && <p className="mt-2.5 text-[12.5px] text-muted">Pick the canvas area first, or turn capture off.</p>}

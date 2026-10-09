@@ -53,7 +53,12 @@ export function Review({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (summary || e.ctrlKey || e.altKey) return
-      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
+      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
+      // The skill dropdown keeps focus after a pick. Review keys still work, and must not change the skill.
+      if (e.target instanceof HTMLSelectElement) {
+        if (!/^(ArrowLeft|ArrowRight|[1-9rRmM])$/.test(e.key)) return
+        e.preventDefault()
+      }
       if (e.key === 'ArrowRight') setI((v) => Math.min(count - 1, v + 1))
       else if (e.key === 'ArrowLeft') setI((v) => Math.max(0, v - 1))
       else if (e.key.toLowerCase() === 'r' && session && pose) updatePose(session.id, i, { redo: !pose.redo })
@@ -127,9 +132,11 @@ export function Review({ sessionId }: { sessionId: string }) {
             Skill
             <select
               value={knownSkill(skills, session.plan.skillId) ?? ''}
-              onChange={(e) =>
-                updateSession(session.id, (s) => ({ ...s, plan: { ...s.plan, skillId: e.target.value || undefined } }))
-              }
+              onChange={(e) => {
+                const skillId = e.target.value || undefined
+                updateSession(session.id, (s) => ({ ...s, plan: { ...s.plan, skillId } }))
+                e.currentTarget.blur()
+              }}
               className="h-9 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
             >
               <option value="">None</option>

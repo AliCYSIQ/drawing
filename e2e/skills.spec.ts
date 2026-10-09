@@ -84,7 +84,14 @@ test('skills: add in Settings, pick on Practice, remembered next time, totals in
 test("review can change a session's skill; deleting a skill keeps its sessions", async () => {
   await page.getByRole('radiogroup', { name: 'Show stats for' }).getByRole('radio', { name: 'All skills' }).click()
   await page.getByRole('button', { name: /· Gesture/ }).click()
-  await page.getByRole('combobox', { name: /^Skill/ }).selectOption({ label: 'Hands' })
+  const select = page.getByRole('combobox', { name: /^Skill/ })
+  await select.selectOption({ label: 'Hands' })
+  // With the dropdown still focused, review keys work and don't change the skill.
+  await select.focus()
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('r')
+  await expect(select.locator('option:checked')).toHaveText('Hands')
+  await expect(page.getByRole('button', { name: /Draw this one again/ })).toHaveAttribute('aria-pressed', 'true')
   await nav('Stats').click()
   await expect(skillRow('Hands')).toContainText('1')
   await expect(skillRow('Gesture')).toContainText('Not yet')

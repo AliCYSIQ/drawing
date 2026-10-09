@@ -306,7 +306,8 @@ function SkillName({ skill, onRename }: { skill: Skill; onRename: (name: string)
       value={draft}
       maxLength={40}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => draft !== skill.name && !onRename(draft) && setDraft(skill.name)}
+      // Switching to another app blurs the field too; only a real blur renames.
+      onBlur={() => document.hasFocus() && draft !== skill.name && !onRename(draft) && setDraft(skill.name)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur()
         else if (e.key === 'Escape') setDraft(skill.name)

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { knownSkill } from '../lib/skills'
 import { useApp } from '../store'
 import { Plus } from './Icons'
@@ -15,7 +15,17 @@ export function SkillPicker({ value, onChange }: { value?: string; onChange: (sk
   const [name, setName] = useState<string | null>(null)
   // The field can blur as it closes; this keeps Esc from adding and Enter from adding twice.
   const closed = useRef(false)
+  // After Enter or Esc, keyboard focus goes back to "New skill" instead of the page.
+  const refocus = useRef(false)
+  const newButton = useRef<HTMLButtonElement>(null)
   const current = knownSkill(skills, value)
+
+  useEffect(() => {
+    if (name === null && refocus.current) {
+      refocus.current = false
+      newButton.current?.focus()
+    }
+  }, [name])
 
   const open = () => {
     closed.current = false
@@ -50,6 +60,7 @@ export function SkillPicker({ value, onChange }: { value?: string; onChange: (sk
       </div>
       {name === null ? (
         <button
+          ref={newButton}
           type="button"
           onClick={open}
           className="inline-flex h-8 items-center gap-1 rounded-full px-3 text-[13px] text-muted hover:bg-raised hover:text-ink"
@@ -61,6 +72,7 @@ export function SkillPicker({ value, onChange }: { value?: string; onChange: (sk
           className="contents"
           onSubmit={(e) => {
             e.preventDefault()
+            refocus.current = true
             close(true)
           }}
         >
@@ -71,8 +83,13 @@ export function SkillPicker({ value, onChange }: { value?: string; onChange: (sk
             maxLength={40}
             placeholder="e.g. gesture"
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Escape' && close(false)}
-            onBlur={() => close(true)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape') return
+              refocus.current = true
+              close(false)
+            }}
+            // Switching to another app (Clip Studio) blurs the field too; keep it open instead of adding a half-typed name.
+            onBlur={() => document.hasFocus() && close(true)}
             className="h-8 w-40 rounded-full bg-transparent px-3 text-[13px] text-ink outline-none ring-1 ring-blue placeholder:text-muted/70"
           />
         </form>
