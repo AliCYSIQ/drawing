@@ -19,7 +19,7 @@ Also:
 - The app isn't signed, so the updater can't check a publisher. It still checks every download against the checksum in `latest.yml`.
 - A private code repository would need a token inside the app. Instead, releases can go to a public releases-only repository (`docs/releasing.md`).
 
-**Library folders: the Windows model.** Six options were weighed:
+**Library folders: plain folders, as in Windows.** Six options were weighed:
 - tags only
 - flat folders
 - a strict tree
@@ -27,23 +27,36 @@ Also:
 - items in many folders at once (labels)
 - smart folders
 
-The app already had a tree with shortcuts (one home per collection, shortcuts elsewhere), which is what people know from Windows Explorer. So that model stays, and the work went into behaving like Explorer:
-- selection
-- drag to move (Ctrl copies, Alt makes a shortcut)
-- cut, copy and paste
-- right-click menus
-- F2, Delete, Undo
+The choice is the strict tree, exactly like folders in Windows:
+- **Move:** a collection is in one place, and moving takes it out of where it was.
+- **Two folders:** to have it in two folders, you copy it.
+- **No shortcuts:** v0.2 had them, and they were dropped as one concept too many. Data version 3 turns existing shortcuts into copies, backed up first like every format change.
+- **Labels and smart folders:** labels (one item in many folders) leave "where does it really live?" unanswered; smart folders may come later.
+
+Behaving like Explorer:
+- click selects, Ctrl/Shift+click selects more, double-click or Enter opens
+- drag to move (Ctrl copies)
+- cut, copy and paste, right-click menus, F2, Delete, Undo
 
 Rules:
-- **Copy** makes an independent collection. Pasted and Pinterest images get their own files, so the original can be deleted or re-synced.
-- **Copying a shortcut** makes another shortcut.
+- **A collection copy** is its own collection (name, tags, image list) that shares the image files, so a copy costs no disk space. A folder copy copies everything inside.
+- **Shared files are deleted safely.** Stored images (pasted, Pinterest) of deleted collections are removed at the next start, and only when no collection uses them. Undo works until then, and a copy never loses images when its original is deleted. A Pinterest re-sync keeps files a copy still uses.
 - **Deleting a folder** asks: keep what's inside (it moves up) or delete it all.
-- **Stored images of deleted collections** are removed at the next start, so Undo always works until then.
 - **Folder tiles** are drawn as folders (tab, images standing in it, front flap), so a folder never looks like a collection.
-- **Labels** (one item in many folders) were not chosen: "where does it really live?" and "does delete remove it everywhere?" have no clear answer.
-- **Smart folders** may come later.
 
-**Practicing a folder.** Practice and Challenges browse the same folders. Ticking a folder practices everything in it, including collections added later (`folderIds` on the plan). No data migration was needed.
+**Adding a folder keeps its structure.** The same plan drives the preview in the add dialog and the import, so what you see is what you get:
+- The chosen folder becomes a library folder (if it has no sub-folders with images, it's simply one collection).
+- A sub-folder with only images becomes a collection.
+- A sub-folder with its own sub-folders becomes a folder, at every depth.
+- A folder with images and sub-folders keeps both: its own images become a "(loose images)" collection inside it.
+
+The same disk folder can become a collection in one import and a folder in another if its contents change; the preview makes that visible. One collection, or only the top folder's images, are still options.
+
+**Practicing a folder.** Practice and Challenges browse the same folders.
+- **Click a folder** to practice everything in it, including sub-folders and collections added later (`folderIds` on the plan).
+- **Double-click** to open it and pick inside. A double-click never changes what was picked.
+- **Click a collection** to practice just that one.
+- **Picked folders** show their collection and image counts.
 
 **Review.** Pages (whole-session photos) and photos (one drawing) keep their roles.
 - **Remove and rename:** both can be removed (× on the tab) and renamed (double-click or F2). Names are stored by file path in the session (`labels`).

@@ -8,22 +8,32 @@ A Windows desktop app for timed reference drawing, drawing from memory, review, 
 - **Updates:** from 0.2.5 on, the app updates itself from GitHub Releases. It downloads in the background and installs when you press Restart or close the app, never during a session. Settings → Updates can check now or turn it off.
 - **Library:** add a folder, single images, a public Pinterest board link, or a collection you fill by dragging or pasting images from your browser.
   - Folders on disk are linked, not copied. If files move, the collection shows what's missing and **Find folder…** relinks it; sessions skip missing images, and history keeps a smaller copy of every practiced reference.
-  - A folder with sub-folders asks whether to make one collection, one per sub-folder, or use only the top folder.
+  - A folder with sub-folders keeps its structure:
+    - it becomes a library folder
+    - a sub-folder with only images becomes a collection
+    - a sub-folder with its own sub-folders becomes a folder, all levels down
+    - a preview shows exactly what will be added
+    - you can make one collection instead, or take only the top folder's images
   - Pasted, dropped and Pinterest images are copied into the app, so practice works offline.
   - Organize collections in library folders that work like folders in Windows:
-    - select with Ctrl/Shift+click or the corner check
-    - drag onto a folder to move (Ctrl copies, Alt makes a shortcut)
-    - right-click for Move to, Copy to, Add shortcut in, Rename and Delete
-    - keys: Ctrl+X / C / V, Del, F2, Ctrl+Z
+    - click selects, double-click opens
+    - Ctrl/Shift+click selects more
+    - drag onto a folder to move (Ctrl copies)
+    - right-click for Move to, Copy to, Rename and Delete
+    - keys: Ctrl+X / C / V, Del, F2, Enter, Ctrl+Z
     - every change can be undone
-  - A collection lives in one folder and can show in others as a shortcut. A copy is an independent collection.
+  - A collection is in one folder. To have it in two folders, copy it: the copy is a separate collection that shares the image files, so nothing is duplicated on disk.
   - Add free tags, star favorites (collections or single images), search by name or tag, and sort by name, date, last practiced or size.
 - **Practice modes:**
   - **Classic:** the same time for every pose.
   - **Class:** blocks of poses that get longer.
   - **Relaxed:** no timer.
   - **Memory:** study the reference, it hides, you draw it from memory, then reveal it and mark the differences in red. Then draw it again.
-- **Choosing what to draw:** Practice and Challenges show the library's folders. Open a folder to pick collections in it, or tick the folder to practice everything inside (collections added to it later too).
+- **Choosing what to draw:** Practice and Challenges show the library's folders.
+  - Click a folder to practice everything inside it, sub-folders included (and collections added later).
+  - Double-click a folder to open it and pick from its sub-folders and collections.
+  - Click a collection to practice just that one.
+  - Picked folders show how many collections and images they hold.
 - **Options:**
   - shuffle, fresh images first (shuffled first, then images you haven't drawn in the last 7 days go to the front, then the ones drawn longest ago), favorites only
   - rest between pictures (seconds or minutes), and a longer break between class blocks
