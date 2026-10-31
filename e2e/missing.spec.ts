@@ -2,6 +2,7 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import { existsSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { addFolder, folderTile, savedLibrary } from './lib'
 import { makeFixtures } from './make-fixtures'
 
 test('a moved folder shows as missing, history keeps working, and Find folder relinks it', async () => {
@@ -20,15 +21,13 @@ test('a moved folder shows as missing, history keeps working, and Find folder re
     app.evaluate(({ dialog }, d) => {
       dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [d] })) as typeof dialog.showOpenDialog
     }, dir)
-  const savedBoard = async () => {
-    await page.waitForTimeout(400)
-    return page.evaluate(async () => (await window.api.load<{ images: { id: string; path: string }[] }[]>('boards'))![0])
-  }
+  const assets = async () => (await savedLibrary(page)).assets.sort((a, b) => a.id.localeCompare(b.id))
 
   await answerFolder(before)
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: 'Add folder' }).click()
-  const ids = (await savedBoard()).images.map((i) => i.id)
+  await addFolder(page)
+  await expect(page.getByText(/Added 3 images/)).toBeVisible()
+  const ids = (await assets()).map((a) => a.id)
 
   // Practice once, without review, so the references get kept copies.
   await page.getByRole('button', { name: 'Practice', exact: true }).click()
@@ -43,9 +42,9 @@ test('a moved folder shows as missing, history keeps working, and Find folder re
   // The folder is moved outside the app.
   renameSync(before, after)
   await page.getByRole('button', { name: 'Library' }).click()
-  await expect(page.getByText('3 missing')).toBeVisible()
-  await page.getByRole('button', { name: /^Poses, 3 images/ }).dblclick()
-  await expect(page.getByRole('alert')).toContainText('3 of 3 images can’t be found')
+  await folderTile(page, 'Poses').click()
+  await expect(page.getByRole('alert')).toContainText('3 images here can’t be found')
+  await expect(page.getByText('Missing', { exact: true })).toHaveCount(3)
 
   // Sessions skip them; history still shows the kept copies.
   await page.getByRole('button', { name: 'Practice', exact: true }).click()
@@ -57,19 +56,29 @@ test('a moved folder shows as missing, history keeps working, and Find folder re
 
   // Find folder relinks every image and keeps their ids.
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: /^Poses, 3 images/ }).dblclick()
+  await folderTile(page, 'Poses').click()
   await answerFolder(after)
   await page.getByRole('button', { name: 'Find folder…' }).click()
   await expect(page.getByText('Found 3 of 3 images in the new place.')).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
-  const relinked = await savedBoard()
-  expect(relinked.images.map((i) => i.id)).toEqual(ids)
-  expect(relinked.images.every((i) => i.path.startsWith(after))).toBe(true)
+  const relinked = await assets()
+  expect(relinked.map((a) => a.id)).toEqual(ids)
+  expect(relinked.every((a) => a.path.startsWith(after))).toBe(true)
 
-  // A rescan of the new folder keeps the same ids too.
-  await page.getByRole('button', { name: 'Rescan folder' }).click()
-  await expect(page.getByText('3 images in the folder.')).toBeVisible()
-  expect((await savedBoard()).images.map((i) => i.id).sort()).toEqual([...ids].sort())
+  // A rescan of the new folder keeps the same ids too, and finds nothing new.
+  await page.getByRole('button', { name: 'Rescan' }).click()
+  await expect(page.getByText('No new images.')).toBeVisible()
+  expect((await assets()).map((a) => a.id)).toEqual(ids)
+
+  // A file renamed on disk keeps its asset (its history and favorite) after a rescan.
+  // Each image's bytes are worked out in the background; wait for them.
+  await expect.poll(async () => (await savedLibrary(page)).assets.filter((a) => a.sha256).length, { timeout: 15_000 }).toBe(3)
+  renameSync(join(after, 'pose-01.png'), join(after, 'renamed.png'))
+  await page.getByRole('button', { name: 'Rescan' }).click()
+  await expect(page.getByText(/1 moved or renamed file found again/)).toBeVisible()
+  const final = await assets()
+  expect(final.map((a) => a.id)).toEqual(ids)
+  expect(final.some((a) => a.path.endsWith('renamed.png'))).toBe(true)
 
   await app.close()
   rmSync(dataDir, { recursive: true, force: true })

@@ -5,17 +5,19 @@
 // - side by side or overlay, for any of them
 // - every pane zooms (scroll) and moves (drag); double-click resets
 // - a red pen (M) marks what is off, on the reference and on your drawing,
-//   in side by side and in overlay; one Undo (Ctrl+Z) and one Clear
+//   in side by side and in overlay; one Undo (Ctrl+Z) and one Clear. Each
+//   layout keeps its own marks: Clear in overlay never clears side by side,
+//   and switching layouts never loses any.
 
 import { useEffect, useRef, useState } from 'react'
 import { imageUrl } from '@shared/api'
 import type { PoseResult, Stroke } from '@shared/types'
-import { REFERENCE_KEY, type SourceKind } from '../lib/review'
+import { overlayKey, REFERENCE_KEY, type SourceKind } from '../lib/review'
 import { useApp } from '../store'
 import { useContextMenu, SEPARATOR } from './ContextMenu'
 import { Camera, Close, Pen, Trash, Undo } from './Icons'
 import { MarkupImage } from './Markup'
-import { usePanZoom } from './PanZoom'
+import { usePanZoom, ZoomBadge } from './PanZoom'
 import { Button, Segmented } from './ui'
 
 export interface DrawingSource {
@@ -95,9 +97,11 @@ export function Compare({
   const history = useRef<string[]>([])
 
   const source = sources[Math.min(sel, sources.length - 1)]
-  const strokes = source ? (marks[source.path] ?? []) : []
-  const refStrokes = marks[REFERENCE_KEY] ?? []
   const overlay = mode === 'overlay' && !!source
+  // Side by side: marks on the reference and on the drawing. Overlay: marks on the drawing over the reference.
+  const drawingKey = source ? (overlay ? overlayKey(source.path) : source.path) : ''
+  const strokes = source ? (marks[drawingKey] ?? []) : []
+  const refStrokes = overlay ? [] : (marks[REFERENCE_KEY] ?? [])
   // Space held: the pen rests and dragging moves the image.
   const drawing = pen && !space
 
@@ -115,24 +119,28 @@ export function Compare({
     onMarks(path, [...list, s])
   }
 
+  /** The marks this layout shows: Undo and Clear only touch these. */
+  const shownKeys = overlay ? [drawingKey] : [REFERENCE_KEY, ...(source ? [drawingKey] : [])]
+
   const undo = () => {
-    // The last image marked that still has marks; otherwise the shown drawing, then the reference.
-    while (history.current.length) {
-      const path = history.current.pop()!
-      const list = marks[path] ?? []
-      if (list.length) return onMarks(path, list.slice(0, -1))
+    // The last image marked in this layout that still has marks; otherwise the shown drawing, then the reference.
+    for (let i = history.current.length - 1; i >= 0; i--) {
+      const key = history.current[i]
+      if (!shownKeys.includes(key)) continue
+      history.current.splice(i, 1)
+      const list = marks[key] ?? []
+      if (list.length) return onMarks(key, list.slice(0, -1))
     }
-    if (strokes.length) onMarks(source!.path, strokes.slice(0, -1))
+    if (strokes.length) onMarks(drawingKey, strokes.slice(0, -1))
     else if (refStrokes.length) onMarks(REFERENCE_KEY, refStrokes.slice(0, -1))
   }
 
   const clear = () => {
-    const before: [string, Stroke[]][] = [[REFERENCE_KEY, refStrokes], ...(source ? [[source.path, strokes] as [string, Stroke[]]] : [])]
-    const had = before.filter(([, list]) => list.length)
+    const had = shownKeys.map((k) => [k, marks[k] ?? []] as [string, Stroke[]]).filter(([, list]) => list.length)
     if (!had.length) return
-    for (const [path] of had) onMarks(path, [])
-    history.current = []
-    notify('Marks cleared.', { label: 'Undo', run: () => had.forEach(([path, list]) => onMarks(path, list)) })
+    for (const [key] of had) onMarks(key, [])
+    history.current = history.current.filter((k) => !shownKeys.includes(k))
+    notify(overlay ? 'Overlay marks cleared.' : 'Marks cleared.', { label: 'Undo', run: () => had.forEach(([key, list]) => onMarks(key, list)) })
   }
 
   const hasMarks = strokes.length > 0 || refStrokes.length > 0
@@ -221,7 +229,7 @@ export function Compare({
             <Button tone="ghost" onClick={undo} title="Undo last mark (Ctrl+Z)">
               <Undo size={15} /> Undo
             </Button>
-            <Button tone="ghost" onClick={clear} title="Clear the marks on the reference and on this drawing">
+            <Button tone="ghost" onClick={clear} title={overlay ? 'Clear the marks made in overlay on this drawing (side by side keeps its own)' : 'Clear the marks on the reference and on this drawing in side by side (overlay keeps its own)'}>
               <Trash size={15} /> Clear marks
             </Button>
           </>
@@ -237,10 +245,9 @@ export function Compare({
         {overlay ? (
           <Overlay
             reference={refUrl}
-            refStrokes={refStrokes}
             drawing={source!}
             strokes={strokes}
-            onAdd={drawing ? (s) => add(source!.path, strokes, s) : undefined}
+            onAdd={drawing ? (s) => add(drawingKey, strokes, s) : undefined}
             panHint={pen}
           />
         ) : (
@@ -259,7 +266,7 @@ export function Compare({
                 label={drawing ? `${source.label}: draw on it to mark what is off` : source.label}
                 src={imageUrl(source.path)}
                 strokes={strokes}
-                onAdd={drawing ? (s) => add(source.path, strokes, s) : undefined}
+                onAdd={drawing ? (s) => add(drawingKey, strokes, s) : undefined}
                 legacyMarkup={source.legacyMarkup}
               />
             ) : onAddPhotos ? (
@@ -384,7 +391,7 @@ function removeLabel(s: DrawingSource): string {
 }
 
 /** One image that zooms and moves on its own; marks are drawn in image space so they follow the zoom. */
-function ZoomPane({
+export function ZoomPane({
   label,
   src,
   strokes,
@@ -397,7 +404,7 @@ function ZoomPane({
   onAdd?: (s: Stroke) => void
   legacyMarkup?: string
 }) {
-  const { view, handlers, reset } = usePanZoom()
+  const { view, handlers, reset, zoomed } = usePanZoom()
   return (
     <figure className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
@@ -409,6 +416,7 @@ function ZoomPane({
         <div className="absolute inset-0" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
           <MarkupImage src={src} alt={label} strokes={strokes} onAdd={onAdd} savedMarkup={legacyMarkup} />
         </div>
+        {zoomed && <ZoomBadge scale={view.scale} onReset={reset} />}
       </div>
       <figcaption className="pt-1.5 text-center text-[12.5px] text-muted">{label}</figcaption>
     </figure>
@@ -422,14 +430,12 @@ function ZoomPane({
  */
 function Overlay({
   reference,
-  refStrokes,
   drawing,
   strokes,
   onAdd,
   panHint
 }: {
   reference: string
-  refStrokes: Stroke[]
   drawing: DrawingSource
   strokes: Stroke[]
   onAdd?: (s: Stroke) => void
@@ -441,7 +447,7 @@ function Overlay({
     <figure className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1 cursor-grab overflow-hidden rounded-md bg-surface active:cursor-grabbing" {...handlers}>
         <div className="pointer-events-none absolute inset-0">
-          <MarkupImage src={reference} alt="Reference" strokes={refStrokes} />
+          <MarkupImage src={reference} alt="Reference" />
         </div>
         <div className="absolute inset-0" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
           <MarkupImage

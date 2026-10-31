@@ -1,10 +1,10 @@
 // Finding past sessions: search, filters and month groups for the History
 // page. Pure, so it can be tested.
 
-import type { Board, Challenge, SessionRecord, Skill } from '@shared/types'
+import type { Challenge, Folder, SessionRecord, Skill } from '@shared/types'
 import { knownSkill } from './skills'
 
-export type SessionKind = 'classic' | 'class' | 'relaxed' | 'memory' | 'challenge' | 'redo'
+export type SessionKind = 'classic' | 'class' | 'relaxed' | 'memory' | 'free' | 'challenge' | 'redo'
 export type HasFilter = 'notes' | 'drawings' | 'marks' | 'flagged'
 export type DateRange = 'all' | '7d' | '30d' | 'year'
 
@@ -38,25 +38,26 @@ export function sessionKind(s: SessionRecord): SessionKind {
 /** What a session has, for the "has" filters and the row's little badges. */
 export function sessionHas(s: SessionRecord): Record<HasFilter, boolean> {
   return {
-    notes: s.poses.some((p) => !!p.note?.trim()),
-    drawings: s.pagePhotos.length > 0 || s.poses.some((p) => !!p.capturePath || !!p.photos?.length),
+    notes: !!s.note?.trim() || s.poses.some((p) => !!p.note?.trim()),
+    drawings: s.pagePhotos.length > 0 || !!s.drawings?.length || s.poses.some((p) => !!p.capturePath || !!p.photos?.length),
     marks: s.poses.some((p) => !!p.markupPath || Object.values(p.marks ?? {}).some((list) => list.length > 0)),
     flagged: s.poses.some((p) => p.redo)
   }
 }
 
 export interface HistoryContext {
-  boards: Pick<Board, 'id' | 'name'>[]
+  /** Library folders (collections before v0.3 have the same ids). */
+  folders: Pick<Folder, 'id' | 'name'>[]
   challenges: Pick<Challenge, 'id' | 'name'>[]
   skills: Skill[]
 }
 
-/** Everything a search can match in a session: notes, mistakes, collections, challenge and skill names. */
+/** Everything a search can match in a session: notes, mistakes, folders, challenge and skill names. */
 export function searchText(s: SessionRecord, ctx: HistoryContext): string {
   const names = new Set(s.boardNames ?? [])
-  for (const id of s.plan.boardIds) {
-    const b = ctx.boards.find((x) => x.id === id)
-    if (b) names.add(b.name)
+  for (const id of [...s.plan.boardIds, ...(s.plan.folderIds ?? [])]) {
+    const f = ctx.folders.find((x) => x.id === id)
+    if (f) names.add(f.name)
   }
   const challenge = s.challenge ? ctx.challenges.find((c) => c.id === s.challenge!.challengeId)?.name : undefined
   const skill = ctx.skills.find((k) => k.id === s.plan.skillId)?.name
@@ -64,7 +65,8 @@ export function searchText(s: SessionRecord, ctx: HistoryContext): string {
     ...names,
     challenge,
     skill,
-    s.plan.mode,
+    s.plan.mode === 'free' ? 'free drawing' : s.plan.mode,
+    s.note,
     ...s.poses.flatMap((p) => [p.note, ...p.mistakes])
   ]
     .filter(Boolean)
@@ -96,7 +98,7 @@ export function filterSessions(sessions: SessionRecord[], f: HistoryFilter, ctx:
     if (f.day ? dayOf(s.startedAt) !== f.day : s.startedAt < since) return false
     if (f.kinds.length && !f.kinds.includes(sessionKind(s))) return false
     if (f.status === 'reviewed' && !s.reviewed) return false
-    if (f.status === 'not-reviewed' && (s.reviewed || !s.finished)) return false
+    if (f.status === 'not-reviewed' && (s.reviewed || !s.finished || s.plan.mode === 'free')) return false
     if (f.status === 'stopped' && s.finished) return false
     if (f.skill !== 'all') {
       const skill = knownSkill(ctx.skills, s.plan.skillId)
@@ -147,5 +149,5 @@ export function groupByMonth(list: SessionRecord[], byMonth = true): MonthGroup[
 
 /** The first note written in a session, for a preview line. */
 export function firstNote(s: SessionRecord): string | undefined {
-  return s.poses.find((p) => p.note?.trim())?.note?.trim()
+  return s.note?.trim() || s.poses.find((p) => p.note?.trim())?.note?.trim()
 }

@@ -1,61 +1,19 @@
-// What the library shows: folder tiles that look like folders, collection
-// tiles with a mosaic cover, and the folder path. Shared by the Library
-// (where things are managed) and the collection pickers on Practice and
-// Challenges (where things are picked).
+// What the library shows: folder tiles that look like folders, image tiles,
+// the selection check and the folder path. Shared by the Library (where
+// things are managed) and the folder picker on Practice and Challenges
+// (where folders are picked to practice).
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { thumbUrl } from '@shared/api'
-import type { Board, BoardKind, Folder, ImageRef } from '@shared/types'
+import type { ImageRef } from '@shared/types'
 import { folderPath } from '../lib/library'
 import { useApp } from '../store'
-import { ArrowRight, Check, Folder as FolderIcon, Images, Star } from './Icons'
-
-export const KIND_LABEL: Record<BoardKind, string> = {
-  folder: 'Linked folder',
-  files: 'Images',
-  pinterest: 'Pinterest',
-  collection: 'Collection'
-}
+import { ArrowLeft, ArrowRight, Check, Folder as FolderIcon } from './Icons'
 
 export function Cover({ img, className = '', size = 240 }: { img: ImageRef; className?: string; size?: number }) {
   // Most references are portrait figures: crop from the upper part so heads stay in the cover.
   return (
     <img src={thumbUrl(img.path, size)} alt="" loading="lazy" draggable={false} className={`h-full w-full object-cover object-[center_20%] ${className}`} />
-  )
-}
-
-/** A collection cover that fits what it holds: empty, one image, two side by side, or one large and two small. */
-export function Mosaic({ images }: { images: ImageRef[] }) {
-  const [a, b, c] = images
-  const frame = 'aspect-[4/3] overflow-hidden rounded-md bg-surface ring-1 ring-line'
-  if (!a) {
-    return (
-      <div className={`${frame} flex items-center justify-center text-muted`}>
-        <Images size={28} />
-      </div>
-    )
-  }
-  if (!b) {
-    return (
-      <div className={frame}>
-        <Cover img={a} size={480} />
-      </div>
-    )
-  }
-  if (!c) {
-    return (
-      <div className={`${frame} grid grid-cols-2 gap-0.5`}>
-        <Cover img={a} />
-        <Cover img={b} />
-      </div>
-    )
-  }
-  return (
-    <div className={`${frame} grid grid-cols-[2fr_1fr] grid-rows-2 gap-0.5`}>
-      <Cover img={a} className="row-span-2" size={480} />
-      <Cover img={b} />
-      <Cover img={c} />
-    </div>
   )
 }
 
@@ -68,7 +26,6 @@ const PAPERS = [
 /**
  * A folder drawn as a folder: the back with its tab, up to three images from
  * inside standing up like papers, and the front flap with what it holds.
- * The shape is what tells it apart from a collection, whatever the images.
  */
 export function FolderArt({ images, label, small }: { images: ImageRef[]; label?: ReactNode; small?: boolean }) {
   return (
@@ -91,24 +48,20 @@ export function FolderArt({ images, label, small }: { images: ImageRef[]; label?
         ))}
       </div>
       <div className={`folder-front absolute inset-x-0 bottom-0 flex items-end rounded-[10px] ${small ? 'h-[52%] p-1.5' : 'h-[50%] p-2.5'}`}>
-        <span className={`flex items-center gap-1.5 text-ink ${small ? 'text-[11.5px]' : 'text-[12.5px]'}`}>
-          <FolderIcon size={small ? 12 : 14} />
-          {label}
+        <span className={`flex min-w-0 items-center gap-1.5 text-ink ${small ? 'text-[11.5px]' : 'text-[12.5px]'}`}>
+          <FolderIcon size={small ? 12 : 14} className="shrink-0" />
+          <span className="truncate">{label}</span>
         </span>
       </div>
     </div>
   )
 }
 
-export function itemCountLabel(folders: number, collections: number): string {
-  const parts = []
-  if (folders) parts.push(`${folders} ${folders === 1 ? 'folder' : 'folders'}`)
-  if (collections) parts.push(`${collections} ${collections === 1 ? 'collection' : 'collections'}`)
-  return parts.join(' · ') || 'Empty'
-}
-
-/** The selection check in a tile's corner. */
-export function TileCheck({ checked, show, onToggle, label }: { checked: boolean; show: boolean; onToggle: () => void; label: string }) {
+/**
+ * The selection check in a tile's corner. It shows on hover, on focus, and
+ * on every tile once something is selected; a checked one always shows.
+ */
+export function TileCheck({ checked, show, onToggle, label }: { checked: boolean; show: boolean; onToggle: (e: React.MouseEvent) => void; label: string }) {
   return (
     <button
       type="button"
@@ -117,11 +70,10 @@ export function TileCheck({ checked, show, onToggle, label }: { checked: boolean
       aria-label={label}
       onClick={(e) => {
         e.stopPropagation()
-        onToggle()
+        onToggle(e)
       }}
-      onDoubleClick={(e) => e.stopPropagation()}
-      className={`absolute left-2 top-2 z-10 h-6 w-6 items-center justify-center rounded-md ring-1 transition-colors ${
-        checked ? 'flex bg-blue text-bg ring-blue' : `${show ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'} bg-bg/85 text-transparent ring-line hover:text-muted`
+      className={`absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md shadow-sm ring-1 transition-[color,opacity] ${
+        checked ? 'bg-blue text-bg ring-blue' : `${show ? '' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'} bg-bg/85 text-transparent ring-line hover:text-muted`
       }`}
     >
       <Check size={14} strokeWidth={2.6} />
@@ -158,8 +110,8 @@ export function RenameField({ value, onDone, label }: { value: string; onDone: (
 }
 
 /**
- * The folder path: Library › Human › Hands. Every part is a link and a drop
- * target (drop something on "Library" to move it to the top level).
+ * Where you are: an Up button, then Library › Human › Hands. Every part is a
+ * link and a drop target (drop something on "Library" to move it to the top).
  */
 export function FolderTrail({
   folderId,
@@ -173,13 +125,25 @@ export function FolderTrail({
   const folders = useApp((s) => s.library.folders)
   const path = folderPath(folders, folderId)
   const parts: { id?: string; name: string }[] = [{ name: 'Library' }, ...path.map((f) => ({ id: f.id, name: f.name }))]
+  const up = path.length ? path[path.length - 1].parentId : null
   return (
-    <nav aria-label="Folder path" className="flex flex-wrap items-center gap-1 text-muted">
+    <nav aria-label="Folder path" className="flex min-w-0 flex-wrap items-center gap-1 text-muted">
+      {up !== null && (
+        <button
+          type="button"
+          aria-label="Up to the folder above (Backspace)"
+          title="Up (Backspace)"
+          onClick={() => onOpen(up)}
+          className="mr-1 flex h-7 w-7 items-center justify-center rounded-md text-muted ring-1 ring-line hover:bg-raised hover:text-ink"
+        >
+          <ArrowLeft size={14} />
+        </button>
+      )}
       {parts.map((p, i) => (
-        <span key={p.id ?? 'top'} className="flex items-center gap-1">
-          {i > 0 && <ArrowRight size={13} />}
+        <span key={p.id ?? 'top'} className="flex min-w-0 items-center gap-1">
+          {i > 0 && <ArrowRight size={13} className="shrink-0" />}
           {i === parts.length - 1 ? (
-            <span {...dropProps?.(p.id)} className="rounded px-1.5 py-0.5 text-ink" aria-current="location">
+            <span {...dropProps?.(p.id)} className="truncate rounded px-1.5 py-0.5 font-semibold text-ink" aria-current="location">
               {p.name}
             </span>
           ) : (
@@ -187,7 +151,7 @@ export function FolderTrail({
               type="button"
               {...dropProps?.(p.id)}
               onClick={() => onOpen(p.id)}
-              className="rounded px-1.5 py-0.5 ring-blue hover:bg-raised hover:text-ink data-[drop=yes]:bg-blue-soft data-[drop=yes]:text-blue data-[drop=yes]:ring-1"
+              className="truncate rounded px-1.5 py-0.5 ring-blue hover:bg-raised hover:text-ink data-[drop=yes]:bg-blue-soft data-[drop=yes]:text-blue data-[drop=yes]:ring-1"
             >
               {p.name}
             </button>
@@ -195,101 +159,6 @@ export function FolderTrail({
         </span>
       ))}
     </nav>
-  )
-}
-
-/**
- * Small folder and collection chips for the pickers on Practice and
- * Challenges. A folder chip picks the whole folder on a click and opens on a
- * double-click (or its arrow button), like a folder in Windows.
- */
-export function PickFolderChip({
-  folder,
-  cover,
-  count,
-  picked,
-  included,
-  onOpen,
-  onPick
-}: {
-  folder: Folder
-  cover: ImageRef[]
-  count: string
-  picked: boolean
-  /** A folder above it is picked, so this one is in already. */
-  included?: string
-  /** `viaDoubleClick`: the two clicks before it already picked and un-picked. */
-  onOpen: (viaDoubleClick: boolean) => void
-  /** `clickCount`: 1 for a single click, 2 for the second click of a double-click. */
-  onPick: (clickCount: number) => void
-}) {
-  const on = picked || !!included
-  return (
-    <div className="group relative" title={included ? `In the picked folder “${included}”` : 'Click to pick everything in it; double-click to open it'}>
-      <button
-        type="button"
-        aria-pressed={on}
-        aria-label={`${folder.name}, folder, ${count}`}
-        onClick={(e) => onPick(e.detail || 1)}
-        onDoubleClick={() => onOpen(true)}
-        onKeyDown={(e) => {
-          if (e.key !== 'Enter') return
-          e.preventDefault()
-          onOpen(false)
-        }}
-        className={`block w-full rounded-md p-1.5 text-left ring-1 transition-colors ${on ? 'bg-blue-soft ring-blue' : 'bg-surface ring-line hover:ring-muted'}`}
-      >
-        <FolderArt images={cover} small label={count} />
-        <span className="mt-1.5 block truncate px-1 pr-7 text-[13px] text-ink">{folder.name}</span>
-      </button>
-      {on && (
-        <span className="pointer-events-none absolute right-2.5 top-2.5 flex h-5 w-5 items-center justify-center rounded-full bg-blue text-bg">
-          <Check size={13} strokeWidth={2.6} />
-        </span>
-      )}
-      <button
-        type="button"
-        aria-label={`Open ${folder.name}`}
-        title="Open (or double-click)"
-        onClick={() => onOpen(false)}
-        className="absolute bottom-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-line hover:text-ink"
-      >
-        <ArrowRight size={14} />
-      </button>
-    </div>
-  )
-}
-
-export function PickBoardChip({ board, selected, onClick, title }: { board: Board; selected: boolean; onClick: () => void; title?: string }) {
-  const strip = board.images.slice(0, 4)
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      aria-label={`${board.name}, ${board.images.length} images`}
-      title={title}
-      onClick={onClick}
-      className={`group relative w-full overflow-hidden rounded-md text-left ring-1 transition-colors ${
-        selected ? 'bg-blue-soft ring-blue' : 'bg-surface ring-line hover:ring-muted'
-      }`}
-    >
-      <div className="flex aspect-[3/1] gap-px overflow-hidden bg-bg">
-        {strip.map((img) => (
-          <img key={img.id} src={thumbUrl(img.path, 160)} alt="" loading="lazy" className="h-full min-w-0 flex-1 object-cover" />
-        ))}
-        {!strip.length && <div className="flex-1" />}
-      </div>
-      <div className="flex items-center gap-2 px-2.5 py-2">
-        <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{board.name}</span>
-        {board.favorite && <Star size={12} filled className="shrink-0 text-blue" />}
-        <span className="tnum text-[12px] text-muted">{board.images.length}</span>
-      </div>
-      {selected && (
-        <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-blue text-bg">
-          <Check size={13} strokeWidth={2.6} />
-        </span>
-      )}
-    </button>
   )
 }
 

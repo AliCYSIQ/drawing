@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { imageUrl } from '@shared/api'
 import { useApp } from '../store'
 import { Close, Lock, Pin, Through } from './Icons'
+import { usePanZoom, ZoomBadge } from './PanZoom'
 import { IconButton } from './ui'
 
 const HIDE_AFTER_MS = 4000
@@ -17,6 +18,11 @@ const CLICK_SLOP = 4
  * after a few idle seconds, when the mouse leaves, or on the next click.
  * With click-through on they never show (the hotkeys still work).
  * Dragging the stage moves the window (by hand, so hover still works).
+ *
+ * The image zooms like every image in the app: scroll zooms, dragging moves
+ * it (in float mode the right or middle button, since the left one moves the
+ * window), double-click shows the whole image again. A new image starts
+ * unzoomed.
  */
 export function Stage({
   path,
@@ -41,6 +47,9 @@ export function Stage({
   const press = useRef<{ x: number; y: number; wx: number; wy: number; moved: boolean } | null>(null)
   const [shown, setShown] = useState(false)
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const zoom = usePanZoom(undefined, { buttons: float.on ? [1, 2] : [0, 1, 2] })
+  const resetZoom = zoom.reset
+  useEffect(() => resetZoom(), [path]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const keepShown = () => {
     clearTimeout(hideTimer.current)
@@ -73,31 +82,52 @@ export function Stage({
   }
 
   const mode = !float.on ? 'hover' : shown && !float.clickThrough ? 'on' : 'off'
+  const z = zoom.handlers
 
   return (
     <div
       data-controls={mode}
-      className={`stage relative h-full w-full overflow-hidden bg-bg ${float.on && !float.locked ? 'cursor-move' : ''}`}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={() => (press.current = null)}
+      className={`stage relative h-full w-full overflow-hidden bg-bg ${float.on && !float.locked ? 'cursor-move' : zoom.zoomed ? 'cursor-grab active:cursor-grabbing' : ''}`}
+      onPointerDown={(e) => {
+        onPointerDown(e)
+        z.onPointerDown(e)
+      }}
+      onPointerMove={(e) => {
+        onPointerMove(e)
+        z.onPointerMove(e)
+      }}
+      onPointerUp={() => {
+        onPointerUp()
+        z.onPointerUp()
+      }}
+      onPointerCancel={() => {
+        press.current = null
+        z.onPointerCancel()
+      }}
+      onContextMenu={z.onContextMenu}
+      onWheel={z.onWheel}
       onPointerLeave={() => float.on && !press.current && setShown(false)}
       onDoubleClick={(e) => {
-        if (float.on && !(e.target as HTMLElement).closest('button, input')) setFloat({ on: false })
+        if ((e.target as HTMLElement).closest('button, input')) return
+        // In float mode a double-click leaves it; otherwise it shows the whole image again.
+        if (float.on) setFloat({ on: false })
+        else resetZoom()
       }}
     >
       {path && (
-        <img
-          key={path}
-          src={imageUrl(path, fallback)}
-          alt="Reference"
-          draggable={false}
-          className="pose-in absolute inset-0 h-full w-full object-contain"
-          style={{ transform: flip ? 'scaleX(-1)' : undefined, filter: grey ? 'grayscale(1)' : undefined }}
-        />
+        <div className="absolute inset-0" style={zoom.zoomed ? { transform: `translate(${zoom.view.x}px, ${zoom.view.y}px) scale(${zoom.view.scale})` } : undefined}>
+          <img
+            key={path}
+            src={imageUrl(path, fallback)}
+            alt="Reference"
+            draggable={false}
+            className="pose-in absolute inset-0 h-full w-full object-contain"
+            style={{ transform: flip ? 'scaleX(-1)' : undefined, filter: grey ? 'grayscale(1)' : undefined }}
+          />
+        </div>
       )}
       {overlay}
+      {path && zoom.zoomed && !float.on && <ZoomBadge scale={zoom.view.scale} onReset={resetZoom} />}
       {float.on && <FloatBar />}
       {children && (
         <div className="reveal absolute inset-x-0 bottom-0 flex justify-center pb-4 pt-10">

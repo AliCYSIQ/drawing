@@ -1,31 +1,38 @@
-// The library as a file manager: folders and collections you select, move,
+// The library as a file manager: folders and images you open, select, move,
 // copy, rename and delete, like files in Windows.
 //
-// - Click selects; Ctrl+click adds, Shift+click selects a range, and the
-//   corner check adds too. Double-click (or Enter) opens.
+// - Click a folder to open it; click an image to view it.
+// - The check in a tile's corner selects it (it shows on hover). Ctrl+click
+//   adds or removes, Shift+click selects a range.
 // - Drag onto a folder (or a part of the folder path) moves; hold Ctrl to
 //   copy. Hovering a folder while dragging opens it.
 // - Right-click for every action. Keys: Ctrl+A, Esc, Delete, F2, Enter,
-//   Ctrl+X / Ctrl+C / Ctrl+V, Ctrl+Z, Backspace (up a folder).
-// - Every change can be undone (Ctrl+Z, or Undo on the message).
-// - A collection is in one place. To have it in two folders, copy it.
+//   Ctrl+X / C / V, Ctrl+Z / Ctrl+Y, Backspace (up a folder).
+// - Every change can be undone. Nothing here ever moves or deletes a file
+//   on disk: the library only organizes.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Board, Folder } from '@shared/types'
+import { thumbUrl } from '@shared/api'
+import { DEFAULT_PLAN, type Folder, type LibraryImage } from '@shared/types'
 import {
-  boardsBelow,
-  boardsIn,
+  assetMap,
   cannotTransfer,
   childFolders,
   copyItems,
+  countLabel,
   deleteItems,
   deleteSummary,
+  descendantIds,
+  folderCounts,
   folderCover,
   folderLabel,
+  imagesBelow,
+  imagesIn,
   itemKey,
   lastPracticed,
   moveItems,
   parseItemKey,
+  renameItem,
   sortItems,
   type Item,
   type SortKey,
@@ -34,8 +41,8 @@ import {
 import { uid, useApp } from '../store'
 import { SEPARATOR, useContextMenu, type MenuEntry } from './ContextMenu'
 import { FolderDialog } from './FolderDialog'
-import { Close, Copy, Folder as FolderIcon, Move, Star, Trash } from './Icons'
-import { FolderArt, FolderTrail, itemCountLabel, KIND_LABEL, Mosaic, RenameField, TileCheck, useSpringOpen } from './LibraryTiles'
+import { Close, Copy, Folder as FolderIcon, Images, Move, Play, Star, Trash } from './Icons'
+import { FolderArt, FolderTrail, RenameField, TileCheck, useSpringOpen } from './LibraryTiles'
 import { Button } from './ui'
 
 const DRAG_TYPE = 'application/x-drawing-items'
@@ -50,6 +57,25 @@ export interface DropProps {
 
 /** What is being dragged; kept here too because a folder that opens mid-drag replaces the tiles. */
 let dragging: Item[] | null = null
+/** When the window last lost focus: a copy made in another app after this wins over the library's own. */
+let blurredAt = 0
+window.addEventListener('blur', () => (blurredAt = Date.now()))
+
+/** True while library items are being dragged (so the page doesn't take the drop as new files). */
+export const isDraggingItems = () => !!dragging
+
+/** Whether Ctrl+V should paste the library's cut or copied items (not an image from another app). */
+export function libraryPasteWins(): boolean {
+  const c = useApp.getState().clipboard
+  return !!c && c.at > blurredAt
+}
+
+/** Pick these folders on Practice and go there. */
+export function practiceFolders(ids: string[]): void {
+  const { settings, updateSettings, go } = useApp.getState()
+  updateSettings({ lastPlan: { ...DEFAULT_PLAN, ...settings.lastPlan, boardIds: [], folderIds: ids } })
+  go({ name: 'practice' })
+}
 
 const OP_LABEL: Record<Transfer, string> = { move: 'Move to', copy: 'Copy to' }
 
@@ -60,24 +86,28 @@ function opFrom(e: React.DragEvent): Transfer {
 export function FolderBrowser({
   folderId,
   results,
-  empty
+  empty,
+  actions
 }: {
   folderId?: string
-  /** Search results to show instead of the folder (collections and folders from anywhere). */
-  results?: { folders: Folder[]; boards: Board[] }
+  /** Search results to show instead of the folder (folders and images from anywhere). */
+  results?: { folders: Folder[]; images: LibraryImage[] }
   /** Shown when the folder has nothing in it. */
   empty: React.ReactNode
+  /** Buttons on the line with the folder path. */
+  actions?: React.ReactNode
 }) {
-  const boards = useApp((s) => s.boards)
-  const folders = useApp((s) => s.library.folders)
+  const library = useApp((s) => s.library)
+  const { folders, images, favoriteImages } = library
   const sessions = useApp((s) => s.sessions)
-  const sort = useApp((s) => s.settings.librarySort ?? 'name')
+  const missingList = useApp((s) => s.missing)
+  const sort = (useApp((s) => s.settings.librarySort) ?? 'name') as SortKey
   const clipboard = useApp((s) => s.clipboard)
   const go = useApp((s) => s.go)
   const notify = useApp((s) => s.notify)
   const changeLibrary = useApp((s) => s.changeLibrary)
+  const setLibrary = useApp((s) => s.setLibrary)
   const setClipboard = useApp((s) => s.setClipboard)
-  const updateBoard = useApp((s) => s.updateBoard)
 
   const [selected, setSelected] = useState<string[]>([])
   const anchor = useRef<string | null>(null)
@@ -88,27 +118,26 @@ export function FolderBrowser({
   const [isDragging, setIsDragging] = useState(false)
   const { open: openMenu, menu } = useContextMenu()
 
+  const assets = useMemo(() => assetMap(library.assets), [library.assets])
+  const missing = useMemo(() => new Set(missingList), [missingList])
+  const favs = useMemo(() => new Set(favoriteImages), [favoriteImages])
   const practiced = useMemo(() => lastPracticed(sessions), [sessions])
 
-  // What this view shows, in order: folders first, then collections.
+  // What this view shows, in order: folders first, then images.
   const view = useMemo(() => {
-    const sortFolders = (list: Folder[]) =>
-      sortItems(
-        list,
-        sort as SortKey,
-        (f) => childFolders(folders, f.id).length + boardsIn(boards, f.id).length,
-        (f) => Math.max(0, ...boardsBelow(folders, boards, f.id).map((b) => practiced.get(b.id) ?? 0))
-      )
-    const sortBoards = (list: Board[]) => sortItems(list, sort as SortKey, (b) => b.images.length, (b) => practiced.get(b.id) ?? 0)
-    if (results) return { folders: sortFolders(results.folders), boards: sortBoards(results.boards) }
-    return { folders: sortFolders(childFolders(folders, folderId)), boards: sortBoards(boardsIn(boards, folderId)) }
-  }, [results, folders, boards, folderId, sort, practiced])
+    const lib = { folders, images }
+    const folderPracticed = (f: Folder) => Math.max(0, ...[...descendantIds(folders, f.id)].map((id) => practiced.folders.get(id) ?? 0))
+    const sortFolders = (list: Folder[]) => sortItems(list, sort, (f) => imagesBelow(lib, f.id).length, folderPracticed)
+    const sortImages = (list: LibraryImage[]) => sortItems(list, sort, () => 0, (i) => practiced.assets.get(i.assetId) ?? 0)
+    if (results) return { folders: sortFolders(results.folders), images: sortImages(results.images) }
+    return { folders: sortFolders(childFolders(folders, folderId)), images: sortImages(imagesIn(images, folderId)) }
+  }, [results, folders, images, folderId, sort, practiced])
 
   const items: Item[] = useMemo(
-    () => [...view.folders.map((f) => ({ type: 'folder' as const, id: f.id })), ...view.boards.map((b) => ({ type: 'board' as const, id: b.id }))],
+    () => [...view.folders.map((f) => ({ type: 'folder' as const, id: f.id })), ...view.images.map((i) => ({ type: 'image' as const, id: i.id }))],
     [view]
   )
-  const order = items.map(itemKey)
+  const order = useMemo(() => items.map(itemKey), [items])
   const selectedItems = selected.map(parseItemKey).filter((x): x is Item => !!x)
   const cutKeys = new Set(clipboard?.op === 'cut' ? clipboard.items.map(itemKey) : [])
 
@@ -118,41 +147,36 @@ export function FolderBrowser({
       const next = sel.filter((k) => order.includes(k))
       return next.length === sel.length ? sel : next
     })
-    // order is derived from items
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items])
+  }, [order])
 
   const nameOf = (item: Item) =>
-    item.type === 'folder' ? (folders.find((f) => f.id === item.id)?.name ?? 'Folder') : (boards.find((b) => b.id === item.id)?.name ?? 'Collection')
+    item.type === 'folder' ? (folders.find((f) => f.id === item.id)?.name ?? 'Folder') : (images.find((i) => i.id === item.id)?.name ?? 'Image')
   const placeName = (target?: string) => (target ? `“${folders.find((f) => f.id === target)?.name ?? 'folder'}”` : 'the top level')
   const describe = (list: Item[]) => {
     if (list.length === 1) return `“${nameOf(list[0])}”`
     const f = list.filter((i) => i.type === 'folder').length
-    const parts = [f && `${f} ${f === 1 ? 'folder' : 'folders'}`, list.length - f && `${list.length - f} ${list.length - f === 1 ? 'collection' : 'collections'}`]
-    return parts.filter(Boolean).join(' and ')
+    const n = list.length - f
+    return [f && `${f} ${f === 1 ? 'folder' : 'folders'}`, n && `${n} ${n === 1 ? 'image' : 'images'}`].filter(Boolean).join(' and ')
   }
 
   const open = (item: Item) => {
     if (item.type === 'folder') go({ name: 'library', folderId: item.id })
-    else go({ name: 'library', boardId: item.id })
+    else go({ name: 'viewer', folderId: results ? undefined : folderId, entryId: item.id })
   }
 
   // ----- actions -----
 
   /** Returns whether anything moved or was copied. */
   const transfer = (op: Transfer, list: Item[], target: string | undefined): boolean => {
-    const lib = { boards: useApp.getState().boards, folders: useApp.getState().library.folders }
+    const lib = useApp.getState().library
     const can = list.filter((it) => !cannotTransfer(lib, it, target, op))
     if (!can.length) {
       notify(cannotTransfer(lib, list[0], target, op) ?? 'Nothing to do.')
       return false
     }
-    if (op === 'move') {
-      changeLibrary('move', (l) => moveItems(l, can, target), `Moved ${describe(can)} to ${placeName(target)}.`)
-    } else {
-      // Copies share the image files; nothing is duplicated on disk.
-      changeLibrary('copy', (l) => copyItems(l, can, target, uid), `Copied ${describe(can)} to ${placeName(target)}.`)
-    }
+    if (op === 'move') changeLibrary('move', (l) => ({ ...l, ...moveItems(l, can, target) }), `Moved ${describe(can)} to ${placeName(target)}.`)
+    // Copies share the image files; nothing is duplicated on disk.
+    else changeLibrary('copy', (l) => ({ ...l, ...copyItems(l, can, target, uid) }), `Copied ${describe(can)} to ${placeName(target)}.`)
     setSelected([])
     return true
   }
@@ -160,18 +184,13 @@ export function FolderBrowser({
   const remove = (list: Item[]) => {
     if (!list.length) return
     if (list.some((i) => i.type === 'folder')) return setConfirm(list)
-    changeLibrary('delete', (l) => deleteItems(l, list, 'keep'), `Deleted ${describe(list)}.`)
+    changeLibrary('delete', (l) => ({ ...l, ...deleteItems(l, list, 'keep') }), `Removed ${describe(list)} from the library.`)
     setSelected([])
   }
 
   const rename = (item: Item, name: string | null) => {
     setRenaming(null)
-    if (!name) return
-    if (item.type === 'folder') {
-      changeLibrary('rename', (l) => ({ ...l, folders: l.folders.map((f) => (f.id === item.id ? { ...f, name } : f)) }))
-    } else {
-      changeLibrary('rename', (l) => ({ ...l, boards: l.boards.map((b) => (b.id === item.id ? { ...b, name } : b)) }))
-    }
+    if (name) changeLibrary('rename', (l) => ({ ...l, ...renameItem(l, item, name) }))
   }
 
   const cut = (list: Item[]) => {
@@ -186,14 +205,23 @@ export function FolderBrowser({
   }
   const paste = () => {
     if (!clipboard || results) return
-    const lib = useApp.getState()
-    const still = clipboard.items.filter((i) =>
-      i.type === 'folder' ? lib.library.folders.some((f) => f.id === i.id) : lib.boards.some((b) => b.id === i.id)
-    )
+    const lib = useApp.getState().library
+    const still = clipboard.items.filter((i) => (i.type === 'folder' ? lib.folders.some((f) => f.id === i.id) : lib.images.some((x) => x.id === i.id)))
     if (!still.length) return setClipboard(null)
     const done = transfer(clipboard.op === 'cut' ? 'move' : 'copy', still, folderId)
     // Cut items are pasted once; if they couldn't go here, they stay cut.
     if (done && clipboard.op === 'cut') setClipboard(null)
+  }
+
+  const toggleFavorite = (list: Item[]) => {
+    const folderIds = list.filter((i) => i.type === 'folder').map((i) => i.id)
+    const assetIds = list.flatMap((i) => (i.type === 'image' ? [images.find((x) => x.id === i.id)?.assetId ?? ''] : [])).filter(Boolean)
+    const on = !(folderIds.every((id) => folders.find((f) => f.id === id)?.favorite) && assetIds.every((a) => favs.has(a)))
+    setLibrary((l) => ({
+      ...l,
+      folders: l.folders.map((f) => (folderIds.includes(f.id) ? { ...f, favorite: on } : f)),
+      favoriteImages: on ? [...new Set([...l.favoriteImages, ...assetIds])] : l.favoriteImages.filter((a) => !assetIds.includes(a))
+    }))
   }
 
   const toggle = (key: string) => {
@@ -201,19 +229,19 @@ export function FolderBrowser({
     setSelected((sel) => (sel.includes(key) ? sel.filter((k) => k !== key) : [...sel, key]))
   }
 
-  /** As in Windows: click selects, Ctrl+click adds or removes, Shift+click selects a range. */
+  const selectRange = (key: string, add: boolean) => {
+    if (!anchor.current || !order.includes(anchor.current)) return toggle(key)
+    const [a, b] = [order.indexOf(anchor.current), order.indexOf(key)].sort((x, y) => x - y)
+    const range = order.slice(a, b + 1)
+    setSelected((sel) => (add ? [...new Set([...sel, ...range])] : range))
+  }
+
+  /** A click opens; with Ctrl it adds to the selection, with Shift it selects a range. */
   const click = (item: Item, e: React.MouseEvent) => {
     const key = itemKey(item)
-    if (e.shiftKey && anchor.current && order.includes(anchor.current)) {
-      const [a, b] = [order.indexOf(anchor.current), order.indexOf(key)].sort((x, y) => x - y)
-      const range = order.slice(a, b + 1)
-      setSelected((sel) => (e.ctrlKey ? [...new Set([...sel, ...range])] : range))
-    } else if (e.ctrlKey || e.metaKey) {
-      toggle(key)
-    } else {
-      anchor.current = key
-      setSelected([key])
-    }
+    if (e.shiftKey) selectRange(key, e.ctrlKey || e.metaKey)
+    else if (e.ctrlKey || e.metaKey) toggle(key)
+    else open(item)
   }
 
   // ----- menus -----
@@ -223,22 +251,23 @@ export function FolderBrowser({
     const list = selected.includes(key) ? selectedItems : [item]
     if (!selected.includes(key)) setSelected([key])
     const single = list.length === 1 ? list[0] : null
-    const board = single?.type === 'board' ? boards.find((b) => b.id === single.id) : null
+    const pickFolders = list.filter((i) => i.type === 'folder').map((i) => i.id)
+    const image = single?.type === 'image' ? images.find((i) => i.id === single.id) : null
+    const allFav = list.every((i) => (i.type === 'folder' ? folders.find((f) => f.id === i.id)?.favorite : favs.has(images.find((x) => x.id === i.id)?.assetId ?? '')))
     const entries: MenuEntry[] = [
       ...(single ? [{ label: 'Open', hint: 'Enter', onClick: () => open(single) }] : []),
-      ...(single ? [{ label: 'Rename', hint: 'F2', onClick: () => setRenaming(itemKey(single)) }] : []),
+      ...(pickFolders.length === list.length ? [{ label: pickFolders.length === 1 ? 'Practice this folder' : 'Practice these folders', icon: <Play size={14} />, onClick: () => practiceFolders(pickFolders) }] : []),
       ...(results && single
-        ? [{ label: 'Show in its folder', onClick: () => go({ name: 'library', folderId: single.type === 'folder' ? folders.find((f) => f.id === single.id)?.parentId : board?.folderId }) }]
+        ? [{ label: 'Show where it is', onClick: () => go({ name: 'library', folderId: single.type === 'folder' ? folders.find((f) => f.id === single.id)?.parentId : image?.folderId }) }]
         : []),
       SEPARATOR,
-      { label: 'Move to…', icon: <Move size={14} />, onClick: () => setDialog({ op: 'move', items: list }) },
-      { label: 'Copy to…', icon: <Copy size={14} />, onClick: () => setDialog({ op: 'copy', items: list }) },
+      ...(single ? [{ label: 'Rename', hint: 'F2', onClick: () => setRenaming(itemKey(single)) }] : []),
+      { label: allFav ? 'Remove from favorites' : 'Add to favorites', icon: <Star size={14} filled={allFav} />, onClick: () => toggleFavorite(list) },
       SEPARATOR,
       { label: 'Cut', hint: 'Ctrl+X', onClick: () => cut(list) },
       { label: 'Copy', hint: 'Ctrl+C', onClick: () => copy(list) },
-      ...(board
-        ? [SEPARATOR, { label: board.favorite ? 'Remove from favorites' : 'Add to favorites', icon: <Star size={14} filled={board.favorite} />, onClick: () => updateBoard(board.id, { favorite: !board.favorite }) }]
-        : []),
+      { label: 'Move to…', icon: <Move size={14} />, onClick: () => setDialog({ op: 'move', items: list }) },
+      { label: 'Copy to…', icon: <Copy size={14} />, onClick: () => setDialog({ op: 'copy', items: list }) },
       SEPARATOR,
       { label: 'Delete…', hint: 'Del', danger: true, icon: <Trash size={14} />, onClick: () => remove(list) }
     ]
@@ -252,10 +281,7 @@ export function FolderBrowser({
       e,
       tidy([
         ...(clipboard && !results
-          ? [
-              { label: clipboard.op === 'cut' ? `Paste (move ${clipboard.items.length})` : `Paste (copy ${clipboard.items.length})`, hint: 'Ctrl+V', onClick: () => paste() },
-              SEPARATOR
-            ]
+          ? [{ label: clipboard.op === 'cut' ? `Paste (move ${clipboard.items.length})` : `Paste (copy ${clipboard.items.length})`, hint: 'Ctrl+V', onClick: () => paste() }, SEPARATOR]
           : []),
         { label: 'Select all', hint: 'Ctrl+A', onClick: () => setSelected(order) }
       ])
@@ -268,7 +294,7 @@ export function FolderBrowser({
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return
-      if (dialog || confirm || renaming) return
+      if (dialog || confirm || renaming || document.querySelector('[role="dialog"]')) return
       const k = e.key.toLowerCase()
       const ctrl = e.ctrlKey || e.metaKey
       const single = selectedItems.length === 1 ? selectedItems[0] : null
@@ -280,17 +306,23 @@ export function FolderBrowser({
       } else if (e.key === 'Delete') {
         remove(selectedItems)
       } else if (e.key === 'F2' && single) {
+        e.preventDefault()
         setRenaming(itemKey(single))
       } else if (e.key === 'Enter' && single && t === document.body) {
-        // A focused tile opens itself; other focused buttons keep their own Enter.
+        // A focused tile opens itself (Enter clicks it); otherwise the one selected opens.
         e.preventDefault()
         open(single)
       } else if (ctrl && k === 'x') {
         cut(selectedItems)
       } else if (ctrl && k === 'c') {
         copy(selectedItems)
-      } else if (ctrl && k === 'v') {
+      } else if (ctrl && k === 'v' && libraryPasteWins()) {
+        // An image copied in another app since then is pasted by the page instead.
+        e.preventDefault()
         paste()
+      } else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) {
+        e.preventDefault()
+        useApp.getState().redoLibrary()
       } else if (ctrl && k === 'z') {
         e.preventDefault()
         useApp.getState().undoLibrary()
@@ -350,14 +382,14 @@ export function FolderBrowser({
     const check = (e: React.DragEvent) => {
       if (!dragging) return null
       const op = opFrom(e)
-      const lib = { boards: useApp.getState().boards, folders: useApp.getState().library.folders }
-      const ok = dragging.some((it) => !cannotTransfer(lib, it, target, op))
-      return { op, ok }
+      const lib = useApp.getState().library
+      return { op, ok: dragging.some((it) => !cannotTransfer(lib, it, target, op)) }
     }
     return {
       onDragOver: (e: React.DragEvent) => {
         const c = check(e)
         if (!c) return
+        e.stopPropagation()
         if (c.ok) e.preventDefault()
         e.dataTransfer.dropEffect = !c.ok ? 'none' : c.op
         if (drop?.key !== key || drop.op !== c.op || drop.ok !== c.ok) setDrop({ key, ...c })
@@ -383,47 +415,52 @@ export function FolderBrowser({
 
   // ----- render -----
 
-  const tileProps = (item: Item) => {
+  const tileProps = (item: Item, name: string) => {
     const key = itemKey(item)
     return {
+      name,
       selected: selected.includes(key),
-      selecting: selected.length > 1,
+      selecting: selected.length > 0,
       dimmed: cutKeys.has(key),
       renaming: renaming === key,
-      onRename: (name: string | null) => rename(item, name),
+      onRename: (n: string | null) => rename(item, n),
       onClick: (e: React.MouseEvent) => click(item, e),
-      onOpen: () => open(item),
-      onToggle: () => toggle(key),
+      onToggle: (e: React.MouseEvent) => (e.shiftKey ? selectRange(key, true) : toggle(key)),
       onMenu: (e: React.MouseEvent) => itemMenu(item, e),
       drag: dragProps(item)
     }
   }
 
+  const pickFolders = selectedItems.filter((i) => i.type === 'folder').map((i) => i.id)
+  // Covers and counts, worked out once per change rather than on every hover or drag.
+  const folderInfo = useMemo(() => {
+    const lib = { folders, images }
+    return new Map(view.folders.map((f) => [f.id, { cover: folderCover(lib, assets, f.id), count: countLabel(folderCounts(lib, f.id)) }]))
+  }, [view.folders, folders, images, assets])
+
   return (
     <div className="relative">
-      {!results && (folderId || clipboard) && (
-        <div className="mb-4 flex min-h-8 flex-wrap items-center gap-3">
+      <div className="mb-4 flex min-h-9 flex-wrap items-center gap-3">
+        {results ? (
+          <h2 className="text-[15px] font-semibold text-ink">Search results</h2>
+        ) : (
           <FolderTrail folderId={folderId} onOpen={(id) => go({ name: 'library', folderId: id })} dropProps={dropProps} />
-          {clipboard && (
-            <Button tone="ghost" className="h-8" onClick={() => paste()}>
-              Paste {clipboard.items.length === 1 ? `“${nameOf(clipboard.items[0])}”` : `${clipboard.items.length} items`} here
-            </Button>
-          )}
-        </div>
-      )}
+        )}
+        {clipboard && !results && (
+          <Button tone="ghost" className="h-8" onClick={() => paste()}>
+            Paste {clipboard.items.length === 1 ? `“${nameOf(clipboard.items[0])}”` : `${clipboard.items.length} items`} here
+          </Button>
+        )}
+        {actions && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
+      </div>
 
       {selected.length > 0 && (
-        <div role="toolbar" aria-label="Selection" className="sticky top-0 z-20 mb-4 flex flex-wrap items-center gap-1 rounded-lg bg-raised px-2 py-1.5 ring-1 ring-line">
+        <div role="toolbar" aria-label="Selection" className="sticky top-0 z-20 mb-4 flex flex-wrap items-center gap-1 rounded-lg bg-raised px-2 py-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.25)] ring-1 ring-line">
           <span className="px-2 font-semibold text-ink">{selected.length} selected</span>
-          {selectedItems.length === 1 && (
-            <>
-              <Button tone="ghost" onClick={() => open(selectedItems[0])}>
-                Open
-              </Button>
-              <Button tone="ghost" onClick={() => setRenaming(selected[0])}>
-                Rename
-              </Button>
-            </>
+          {pickFolders.length > 0 && pickFolders.length === selectedItems.length && (
+            <Button tone="ghost" onClick={() => practiceFolders(pickFolders)}>
+              <Play size={14} /> Practice
+            </Button>
           )}
           <Button tone="ghost" onClick={() => setDialog({ op: 'move', items: selectedItems })}>
             <Move size={15} /> Move to…
@@ -434,7 +471,7 @@ export function FolderBrowser({
           <Button tone="danger" onClick={() => remove(selectedItems)}>
             <Trash size={15} /> Delete
           </Button>
-          <span className="ml-auto text-[12.5px] text-muted">Double-click opens · drag to a folder to move · Ctrl copies</span>
+          <span className="ml-auto hidden text-[12.5px] text-muted lg:inline">Drag to a folder to move · Ctrl copies</span>
           <button type="button" aria-label="Clear selection (Esc)" title="Clear selection (Esc)" onClick={() => setSelected([])} className="flex h-8 w-8 items-center justify-center rounded-md text-muted hover:bg-line hover:text-ink">
             <Close size={15} />
           </button>
@@ -444,28 +481,54 @@ export function FolderBrowser({
       {!items.length ? (
         <div onContextMenu={backgroundMenu}>{empty}</div>
       ) : (
-        <div
-          className="grid min-h-[200px] grid-cols-[repeat(auto-fill,minmax(clamp(240px,15vw,340px),1fr))] gap-5"
-          onClick={(e) => e.target === e.currentTarget && setSelected([])}
-          onContextMenu={backgroundMenu}
-        >
-          {view.folders.map((f) => {
-            const item: Item = { type: 'folder', id: f.id }
-            return (
-              <FolderTile
-                key={itemKey(item)}
-                folder={f}
-                where={results ? folderLabel(folders, f.parentId) || 'Library' : undefined}
-                {...tileProps(item)}
-                drop={dropProps(f.id)}
-                dropLabel={drop?.key === f.id && drop.ok ? `${OP_LABEL[drop.op]} ${f.name}` : null}
-              />
-            )
-          })}
-          {view.boards.map((b) => {
-            const item: Item = { type: 'board', id: b.id }
-            return <BoardTile key={itemKey(item)} board={b} where={results ? folderLabel(folders, b.folderId) || 'Library' : undefined} {...tileProps(item)} />
-          })}
+        <div className="min-h-[200px]" onClick={(e) => e.target === e.currentTarget && setSelected([])} onContextMenu={backgroundMenu}>
+          {view.folders.length > 0 && (
+            <div
+              className="grid grid-cols-[repeat(auto-fill,minmax(clamp(180px,12vw,260px),1fr))] gap-5"
+              onClick={(e) => e.target === e.currentTarget && setSelected([])}
+              onContextMenu={backgroundMenu}
+            >
+              {view.folders.map((f) => {
+                const item: Item = { type: 'folder', id: f.id }
+                return (
+                  <FolderTile
+                    key={itemKey(item)}
+                    folder={f}
+                    cover={folderInfo.get(f.id)?.cover ?? []}
+                    count={folderInfo.get(f.id)?.count ?? ''}
+                    where={results ? folderLabel(folders, f.parentId) || 'Library' : undefined}
+                    {...tileProps(item, f.name)}
+                    drop={dropProps(f.id)}
+                    dropLabel={drop?.key === f.id && drop.ok ? `${OP_LABEL[drop.op]} ${f.name}` : null}
+                    onOpen={() => open(item)}
+                  />
+                )
+              })}
+            </div>
+          )}
+          {view.folders.length > 0 && view.images.length > 0 && <div className="h-6" />}
+          {view.images.length > 0 && (
+            <div
+              className="grid grid-cols-[repeat(auto-fill,minmax(clamp(130px,9vw,200px),1fr))] gap-3"
+              onClick={(e) => e.target === e.currentTarget && setSelected([])}
+              onContextMenu={backgroundMenu}
+            >
+              {view.images.map((img) => {
+                const item: Item = { type: 'image', id: img.id }
+                const asset = assets.get(img.assetId)
+                return (
+                  <ImageTile
+                    key={itemKey(item)}
+                    path={asset?.path}
+                    missing={missing.has(img.assetId) || !asset}
+                    favorite={favs.has(img.assetId)}
+                    where={results ? folderLabel(folders, img.folderId) || 'Library' : undefined}
+                    {...tileProps(item, img.name)}
+                  />
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -494,7 +557,7 @@ export function FolderBrowser({
           onDelete={(mode) => {
             const list = confirm
             setConfirm(null)
-            changeLibrary('delete', (l) => deleteItems(l, list, mode), `Deleted ${describe(list)}.`)
+            changeLibrary('delete', (l) => ({ ...l, ...deleteItems(l, list, mode) }), `Removed ${describe(list)} from the library.`)
             setSelected([])
           }}
         />
@@ -516,37 +579,33 @@ function tidy(entries: MenuEntry[]): MenuEntry[] {
 }
 
 interface TileProps {
+  name: string
   selected: boolean
-  /** More than one selected: every tile shows its check. */
+  /** Something is selected: every tile shows its check. */
   selecting: boolean
   dimmed: boolean
   renaming: boolean
   onRename: (name: string | null) => void
   onClick: (e: React.MouseEvent) => void
-  onOpen: () => void
-  onToggle: () => void
+  onToggle: (e: React.MouseEvent) => void
   onMenu: (e: React.MouseEvent) => void
   drag: { draggable: boolean; onDragStart: (e: React.DragEvent) => void }
   /** Folder path shown in search results. */
   where?: string
 }
 
-/** Enter on a focused tile opens it (a click only selects). */
-const openOnEnter = (open: () => void) => (e: React.KeyboardEvent) => {
-  if (e.key !== 'Enter') return
-  e.preventDefault()
-  e.stopPropagation()
-  open()
-}
-
-function FolderTile({ folder, drop, dropLabel, ...t }: TileProps & { folder: Folder; drop: DropProps; dropLabel: string | null }) {
-  const boards = useApp((s) => s.boards)
-  const folders = useApp((s) => s.library.folders)
-  const go = useApp((s) => s.go)
-  const cover = folderCover(folders, boards, folder.id)
-  const count = itemCountLabel(childFolders(folders, folder.id).length, boardsIn(boards, folder.id).length)
-  const spring = useSpringOpen(() => go({ name: 'library', folderId: folder.id }))
+function FolderTile({
+  folder,
+  cover,
+  count,
+  drop,
+  dropLabel,
+  onOpen,
+  ...t
+}: TileProps & { folder: Folder; cover: ReturnType<typeof folderCover>; count: string; drop: DropProps; dropLabel: string | null; onOpen: () => void }) {
+  const spring = useSpringOpen(onOpen)
   const { onDragOver, onDragLeave, onDrop, 'data-drop': dataDrop } = drop
+  const kind = folder.source?.kind === 'pinterest' ? 'Pinterest board' : folder.source?.kind === 'disk' ? 'Linked folder' : null
   return (
     <div
       className={`group relative ${t.dimmed ? 'opacity-50' : ''}`}
@@ -565,11 +624,9 @@ function FolderTile({ folder, drop, dropLabel, ...t }: TileProps & { folder: Fol
     >
       <button
         type="button"
-        aria-label={`${folder.name}, folder, ${count}`}
-        aria-pressed={t.selected}
+        data-tile
+        aria-label={`${t.name}, folder, ${count}`}
         onClick={t.onClick}
-        onDoubleClick={t.onOpen}
-        onKeyDown={openOnEnter(t.onOpen)}
         onContextMenu={t.onMenu}
         className="block w-full text-left"
       >
@@ -577,13 +634,18 @@ function FolderTile({ folder, drop, dropLabel, ...t }: TileProps & { folder: Fol
           <FolderArt images={cover} label={count} />
         </div>
         {t.renaming ? (
-          <RenameField value={folder.name} onDone={t.onRename} label={`New name for ${folder.name}`} />
+          <RenameField value={t.name} onDone={t.onRename} label={`New name for ${t.name}`} />
         ) : (
-          <div className={`mt-2 truncate font-semibold group-hover:text-blue ${t.selected ? 'text-blue' : 'text-ink'}`}>{folder.name}</div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className={`min-w-0 flex-1 truncate font-semibold group-hover:text-blue ${t.selected ? 'text-blue' : 'text-ink'}`}>{t.name}</span>
+            {folder.favorite && <Star size={13} filled className="shrink-0 self-center text-blue" />}
+          </div>
         )}
-        <div className="text-[12.5px] text-muted">{t.where ? `In ${t.where}` : 'Folder'}</div>
+        <div className="truncate text-[12.5px] text-muted">
+          {[t.where ? `In ${t.where}` : kind ?? 'Folder', ...(folder.tags ?? [])].join(' · ')}
+        </div>
       </button>
-      <TileCheck checked={t.selected} show={t.selecting} onToggle={t.onToggle} label={`Select ${folder.name}`} />
+      <TileCheck checked={t.selected} show={t.selecting} onToggle={t.onToggle} label={`Select ${t.name}`} />
       {dropLabel && (
         <span className="pointer-events-none absolute left-1/2 top-1/3 -translate-x-1/2 rounded-md bg-blue px-2.5 py-1 text-[12.5px] font-semibold text-bg shadow-lg">
           {dropLabel}
@@ -593,51 +655,50 @@ function FolderTile({ folder, drop, dropLabel, ...t }: TileProps & { folder: Fol
   )
 }
 
-function BoardTile({ board, ...t }: TileProps & { board: Board }) {
-  const missing = useApp((s) => s.missing[board.id]?.length ?? 0)
+function ImageTile({ path, missing, favorite, ...t }: TileProps & { path?: string; missing: boolean; favorite: boolean }) {
   return (
     <div className={`group relative ${t.dimmed ? 'opacity-50' : ''}`} {...t.drag}>
-      <button
-        type="button"
-        aria-label={`${board.name}, ${board.images.length} images`}
-        aria-pressed={t.selected}
-        onClick={t.onClick}
-        onDoubleClick={t.onOpen}
-        onKeyDown={openOnEnter(t.onOpen)}
-        onContextMenu={t.onMenu}
-        className="block w-full text-left"
-      >
-        <div className={`relative rounded-md ${t.selected ? 'ring-2 ring-blue ring-offset-2 ring-offset-bg' : ''}`}>
-          <Mosaic images={board.images} />
-          {missing > 0 && (
-            <span className="absolute bottom-2 right-2 flex h-6 items-center rounded-md bg-bg/90 px-1.5 text-[12px] text-red">{missing} missing</span>
+      <button type="button" data-tile aria-label={`${t.name}, image`} onClick={t.onClick} onContextMenu={t.onMenu} className="block w-full text-left">
+        <div className={`relative aspect-[3/4] overflow-hidden rounded-md bg-surface ring-1 transition-shadow ${t.selected ? 'ring-2 ring-blue ring-offset-2 ring-offset-bg' : 'ring-line group-hover:ring-muted'}`}>
+          {missing || !path ? (
+            <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-[12.5px] text-red">
+              <Images size={20} />
+              Missing
+            </span>
+          ) : (
+            <img src={thumbUrl(path, 320)} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover" />
+          )}
+          {favorite && (
+            <span className="absolute bottom-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded-md bg-bg/85 text-blue">
+              <Star size={13} filled />
+            </span>
           )}
         </div>
         {t.renaming ? (
-          <RenameField value={board.name} onDone={t.onRename} label={`New name for ${board.name}`} />
+          <RenameField value={t.name} onDone={t.onRename} label={`New name for ${t.name}`} />
         ) : (
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className={`min-w-0 flex-1 truncate font-semibold group-hover:text-blue ${t.selected ? 'text-blue' : 'text-ink'}`}>{board.name}</span>
-            {board.favorite && <Star size={13} filled className="shrink-0 self-center text-blue" />}
-            <span className="tnum text-[12.5px] text-muted">{board.images.length}</span>
+          <div className={`mt-1.5 truncate text-[12.5px] ${t.selected ? 'text-blue' : 'text-muted group-hover:text-ink'}`} title={t.name}>
+            {t.name}
           </div>
         )}
-        <div className="truncate text-[12.5px] text-muted">{[KIND_LABEL[board.kind], ...board.tags].join(', ')}</div>
-        {t.where && <div className="truncate text-[12.5px] text-muted">In {t.where}</div>}
+        {t.where && <div className="truncate text-[12px] text-muted/80">In {t.where}</div>}
       </button>
-      <TileCheck checked={t.selected} show={t.selecting} onToggle={t.onToggle} label={`Select ${board.name}`} />
+      <TileCheck checked={t.selected} show={t.selecting} onToggle={t.onToggle} label={`Select ${t.name}`} />
     </div>
   )
 }
 
-/** Deleting folders: keep what is inside (it moves up) or delete it all. */
+/** Deleting folders: keep what is inside (it moves up) or delete it all. Files on disk are never touched. */
 export function DeleteDialog({ items, onCancel, onDelete }: { items: Item[]; onCancel: () => void; onDelete: (mode: 'keep' | 'all') => void }) {
-  const boards = useApp((s) => s.boards)
   const folders = useApp((s) => s.library.folders)
-  const sum = deleteSummary({ boards, folders }, items)
-  const what = [sum.folders && `${sum.folders} ${sum.folders === 1 ? 'folder' : 'folders'}`, sum.boards && `${sum.boards} ${sum.boards === 1 ? 'collection' : 'collections'}`]
+  const images = useApp((s) => s.library.images)
+  const sum = deleteSummary({ folders, images }, items)
+  const what = [sum.folders && `${sum.folders} ${sum.folders === 1 ? 'folder' : 'folders'}`, sum.images && `${sum.images} ${sum.images === 1 ? 'image' : 'images'}`]
     .filter(Boolean)
     .join(', ')
+  const inside = [sum.insideFolders && `${sum.insideFolders} ${sum.insideFolders === 1 ? 'folder' : 'folders'}`, sum.insideImages && `${sum.insideImages} ${sum.insideImages === 1 ? 'image' : 'images'}`]
+    .filter(Boolean)
+    .join(' and ')
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCancel()
@@ -648,24 +709,21 @@ export function DeleteDialog({ items, onCancel, onDelete }: { items: Item[]; onC
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/70" role="dialog" aria-label="Delete" onPointerDown={(e) => e.target === e.currentTarget && onCancel()}>
       <div className="w-[min(480px,92vw)] rounded-lg bg-surface p-6 shadow-[0_12px_40px_rgba(0,0,0,0.4)] ring-1 ring-line">
-        <h2 className="text-[17px] font-semibold">Delete {what}?</h2>
+        <h2 className="text-[17px] font-semibold">Delete {what} from the library?</h2>
         <p className="mt-2 text-muted">
-          {sum.inside
-            ? `The ${sum.folders === 1 ? 'folder holds' : 'folders hold'} ${sum.inside} ${sum.inside === 1 ? 'thing' : 'things'} (folders and collections).`
-            : 'The folder is empty.'}{' '}
-          Your image files on disk are never deleted. You can undo this.
+          {inside ? `Inside: ${inside}.` : 'The folder is empty.'} Your image files on disk are never deleted, and you can undo this.
         </p>
         <div className="mt-6 flex flex-wrap justify-end gap-2">
           <Button tone="ghost" onClick={onCancel}>
             Cancel
           </Button>
-          {sum.inside > 0 && (
+          {inside && (
             <Button tone="danger" onClick={() => onDelete('all')}>
               <FolderIcon size={15} /> Delete everything inside too
             </Button>
           )}
           <Button tone="primary" autoFocus onClick={() => onDelete('keep')}>
-            {sum.inside ? 'Delete folder (keep what’s inside)' : 'Delete'}
+            {inside ? 'Delete folder, keep what’s inside' : 'Delete'}
           </Button>
         </div>
       </div>

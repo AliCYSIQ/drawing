@@ -27,13 +27,13 @@ export function FolderDialog({
   onClose: () => void
 }) {
   const folders = useApp((s) => s.library.folders)
-  const boards = useApp((s) => s.boards)
-  const setLibrary = useApp((s) => s.setLibrary)
+  const images = useApp((s) => s.library.images)
+  const changeLibrary = useApp((s) => s.changeLibrary)
   const [picked, setPicked] = useState<string | undefined>(start)
   const [naming, setNaming] = useState<string | null>(null)
 
   const why = (target: string | undefined) => {
-    const reasons = items.map((it) => cannotTransfer({ boards, folders }, it, target, op))
+    const reasons = items.map((it) => cannotTransfer({ folders, images }, it, target, op))
     // A place is fine if at least one item can go there.
     return reasons.every(Boolean) ? reasons[0] : null
   }
@@ -48,8 +48,8 @@ export function FolderDialog({
   }, [onClose, naming])
 
   const makeFolder = (name: string) => {
-    const f: Folder = { id: uid(), name: name.trim() || 'New folder', parentId: picked, createdAt: Date.now() }
-    setLibrary((l) => ({ ...l, folders: [...l.folders, f] }))
+    const f: Folder = { id: uid(), name: name.trim() || 'New folder', ...(picked ? { parentId: picked } : {}), createdAt: Date.now(), tags: [] }
+    changeLibrary('new folder', (l) => ({ ...l, folders: [...l.folders, f] }))
     setPicked(f.id)
     setNaming(null)
   }

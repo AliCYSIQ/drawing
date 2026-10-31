@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { thumbUrl } from '@shared/api'
+import { imageUrl, thumbUrl } from '@shared/api'
 import { MISTAKES, type PoseResult, type SessionRecord, type Stroke } from '@shared/types'
-import { Compare, drawingSources, type DrawingSource } from '../components/Compare'
+import { Compare, drawingSources, ZoomPane, type DrawingSource } from '../components/Compare'
 import { ArrowLeft, ArrowRight, Camera, Check, Redo } from '../components/Icons'
 import { Button, IconButton } from '../components/ui'
 import { formatDuration, formatSeconds } from '../lib/schedule'
@@ -27,6 +27,44 @@ function earlierTries(session: SessionRecord, pose: PoseResult, original?: Sessi
 
 export function Review({ sessionId }: { sessionId: string }) {
   const session = useApp((s) => s.sessions.find((x) => x.id === sessionId))
+  if (session?.plan.mode === 'free') return <FreeReview session={session} />
+  return <PoseReview sessionId={sessionId} />
+}
+
+/** Asks before a capture or photo is removed; Undo still works afterwards. */
+function ConfirmRemove({ source, onRemove, onCancel }: { source: DrawingSource; onRemove: () => void; onCancel: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onCancel])
+  const page = source.kind === 'page'
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/70" role="dialog" aria-label="Remove image" onPointerDown={(e) => e.target === e.currentTarget && onCancel()}>
+      <div className="w-[min(440px,92vw)] rounded-lg bg-surface p-6 shadow-[0_12px_40px_rgba(0,0,0,0.4)] ring-1 ring-line">
+        <h2 className="text-[17px] font-semibold">Remove “{source.label}”?</h2>
+        <p className="mt-2 text-muted">
+          {page ? 'This page photo goes from every pose of this session, with its marks.' : 'It goes from this drawing, with its marks.'} You can undo this for a
+          few seconds afterwards.
+        </p>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button tone="ghost" onClick={onCancel}>
+            Keep it
+          </Button>
+          <Button tone="danger" autoFocus onClick={onRemove}>
+            Remove
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PoseReview({ sessionId }: { sessionId: string }) {
+  const session = useApp((s) => s.sessions.find((x) => x.id === sessionId))
+  const [confirmRemove, setConfirmRemove] = useState<DrawingSource | null>(null)
   const sessions = useApp((s) => s.sessions)
   const updatePose = useApp((s) => s.updatePose)
   const updateSession = useApp((s) => s.updateSession)
@@ -53,7 +91,7 @@ export function Review({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (summary || e.ctrlKey || e.altKey) return
+      if (summary || confirmRemove || e.ctrlKey || e.altKey) return
       if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
       // The skill dropdown keeps focus after a pick. Review keys still work, and must not change the skill.
       if (e.target instanceof HTMLSelectElement) {
@@ -114,9 +152,10 @@ export function Review({ sessionId }: { sessionId: string }) {
     updatePose(session.id, i, { marks: { ...now?.marks, [path]: strokes } })
   }
 
-  /** Remove a capture or photo; Undo brings it back, and the app's copy is only deleted once Undo is gone. */
+  /** Remove a capture or photo (after asking); Undo brings it back, and the app's copy is only deleted once Undo is gone. */
   const removeImage = (source: DrawingSource) => {
     if (!source.kind) return
+    setConfirmRemove(null)
     const index = i
     const { session: next, undo } = removeSource(session, index, { kind: source.kind, path: source.path })
     updateSession(session.id, () => next)
@@ -216,7 +255,7 @@ export function Review({ sessionId }: { sessionId: string }) {
           marks={pose.marks ?? {}}
           onMarks={setMarks}
           onAddPhotos={addPosePhotos}
-          onRemoveSource={removeImage}
+          onRemoveSource={setConfirmRemove}
           onRenameSource={renameImage}
           emptyHint="Hold your page next to the screen and check the main line first, then proportions and tilt. Or add a photo to see them side by side."
         />
@@ -292,6 +331,7 @@ export function Review({ sessionId }: { sessionId: string }) {
         </aside>
       </div>
 
+      {confirmRemove && <ConfirmRemove source={confirmRemove} onCancel={() => setConfirmRemove(null)} onRemove={() => removeImage(confirmRemove)} />}
       {summary && (
         <Summary
           session={session}
@@ -302,6 +342,143 @@ export function Review({ sessionId }: { sessionId: string }) {
           onBack={() => setSummary(false)}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * A free drawing session afterwards: how long it was, its skill and note,
+ * and the drawing itself (the canvas capture, or photos you add of a paper
+ * drawing). There is no reference, so nothing to compare or tag.
+ */
+function FreeReview({ session }: { session: SessionRecord }) {
+  const updateSession = useApp((s) => s.updateSession)
+  const go = useApp((s) => s.go)
+  const notify = useApp((s) => s.notify)
+  const skills = useApp((s) => s.skills)
+  const [sel, setSel] = useState(0)
+  const [confirmRemove, setConfirmRemove] = useState<DrawingSource | null>(null)
+  const drawings = session.drawings ?? []
+  const shown = drawings[Math.min(sel, drawings.length - 1)]
+  const label = (p: string, i: number) => session.labels?.[p]?.trim() || (i === 0 && session.plan.capture && p.includes('captures') ? 'Canvas capture' : `Drawing ${i + 1}`)
+
+  const addPhotos = async () => {
+    const picked = await window.api.pickPhotos()
+    if (!picked.length) return
+    const kept = await Promise.all(picked.map((p) => window.api.keepPhoto(session.id, p)))
+    updateSession(session.id, (s) => ({ ...s, drawings: [...(s.drawings ?? []), ...kept] }))
+    setSel(drawings.length + kept.length - 1)
+  }
+
+  const remove = (path: string) => {
+    setConfirmRemove(null)
+    const at = drawings.indexOf(path)
+    updateSession(session.id, (s) => ({ ...s, drawings: (s.drawings ?? []).filter((d) => d !== path) }))
+    setSel((v) => Math.max(0, Math.min(v, drawings.length - 2)))
+    notify('Drawing removed.', {
+      label: 'Undo',
+      run: () =>
+        updateSession(session.id, (s) => {
+          const list = (s.drawings ?? []).filter((d) => d !== path)
+          list.splice(Math.min(at, list.length), 0, path)
+          return { ...s, drawings: list }
+        })
+    })
+    setTimeout(() => {
+      const cur = useApp.getState().sessions.find((x) => x.id === session.id)
+      if (!cur || !filesInUse(cur).has(path)) void window.api.deleteSessionFile(path)
+    }, 10_000)
+  }
+
+  return (
+    <div className="relative flex h-full flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-5 py-3">
+        <div className="mr-auto">
+          <h1 className="text-[17px] font-semibold">Free drawing</h1>
+          <div className="text-[12.5px] text-muted">
+            {new Date(session.startedAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            {', '}
+            {formatDuration(session.activeMs / 1000)} of drawing
+          </div>
+        </div>
+        <Button onClick={addPhotos} title="A photo of your drawing, for example of a paper page">
+          <Camera size={16} /> Add photo
+        </Button>
+        <Button tone="primary" onClick={() => go({ name: 'history' })}>
+          <Check size={16} /> Done
+        </Button>
+      </div>
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_300px]">
+        <div className="flex min-h-0 min-w-0 flex-col gap-3 p-4">
+          {drawings.length > 1 && (
+            <div role="tablist" aria-label="Drawings" className="inline-flex flex-wrap self-start rounded-md bg-surface p-0.5 ring-1 ring-line">
+              {drawings.map((p, i) => (
+                <button
+                  key={p}
+                  type="button"
+                  role="tab"
+                  aria-selected={p === shown}
+                  onClick={() => setSel(i)}
+                  className={`h-8 rounded-[5px] px-3 text-[13px] ${p === shown ? 'bg-raised text-ink shadow-[inset_0_-2px_0_var(--blue)]' : 'text-muted hover:text-ink'}`}
+                >
+                  {label(p, i)}
+                </button>
+              ))}
+            </div>
+          )}
+          {shown ? (
+            <ZoomPane label={label(shown, drawings.indexOf(shown))} src={imageUrl(shown)} />
+          ) : (
+            <button
+              type="button"
+              onClick={addPhotos}
+              className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-line px-6 text-center text-muted hover:border-muted hover:text-ink"
+            >
+              <Camera size={26} />
+              {session.plan.capture ? 'The canvas couldn’t be captured this time. ' : 'No picture of this drawing. '}
+              Click to add a photo of it, if you like.
+            </button>
+          )}
+        </div>
+        <aside aria-label="About this session" className="flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-line p-5">
+          {skills.length > 0 && (
+            <label className="block">
+              <span className="block pb-2 text-muted">Skill</span>
+              <select
+                value={knownSkill(skills, session.plan.skillId) ?? ''}
+                onChange={(e) => {
+                  const skillId = e.target.value || undefined
+                  updateSession(session.id, (s) => ({ ...s, plan: { ...s.plan, skillId } }))
+                }}
+                className="h-9 w-full rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
+              >
+                <option value="">None</option>
+                {skills.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="block">
+            <span className="block pb-2 text-muted">Note</span>
+            <textarea
+              value={session.note ?? ''}
+              onChange={(e) => updateSession(session.id, (s) => ({ ...s, note: e.target.value }))}
+              rows={5}
+              placeholder="What you drew, what went well, what to try next"
+              className="w-full resize-none rounded-md bg-surface p-2.5 text-ink outline-none ring-1 ring-line placeholder:text-muted/70 focus:ring-blue"
+            />
+          </label>
+          {shown && (
+            <Button tone="ghost" className="self-start" onClick={() => setConfirmRemove({ path: shown, label: label(shown, drawings.indexOf(shown)), kind: 'photo' })}>
+              Remove this picture…
+            </Button>
+          )}
+        </aside>
+      </div>
+      {confirmRemove && <ConfirmRemove source={confirmRemove} onCancel={() => setConfirmRemove(null)} onRemove={() => remove(confirmRemove.path)} />}
     </div>
   )
 }

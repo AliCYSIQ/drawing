@@ -36,7 +36,7 @@ const sessions = [
   session('old', at(2025, 12, 31), { finished: false, reviewed: false, poses: [pose({ capturePath: '/c.png', redo: true, marks: { '/c.png': [[{ x: 0, y: 0 }]] } })] }),
   session('renamed', at(2026, 10, 5), { boardNames: ['Feet studies'], plan: { ...DEFAULT_PLAN, skillId: 'k1', boardIds: [] } })
 ]
-const ctx = { boards: [{ id: 'hands', name: 'Hands close up' }], challenges: [{ id: 'c1', name: 'Speed ladder' }], skills: [{ id: 'k1', name: 'Gesture' }] }
+const ctx = { folders: [{ id: 'hands', name: 'Hands close up' }], challenges: [{ id: 'c1', name: 'Speed ladder' }], skills: [{ id: 'k1', name: 'Gesture' }] }
 const ids = (f: Partial<typeof NO_FILTER>) => filterSessions(sessions, { ...NO_FILTER, ...f }, ctx, now).map((s) => s.id)
 
 describe('history filters', () => {
@@ -70,6 +70,11 @@ describe('history filters', () => {
     expect(ids({ has: ['drawings', 'marks', 'flagged'] })).toEqual(['old'])
   })
 
+  it('finds a session by the name of a folder it practiced (also after the folder was renamed)', () => {
+    const list = [session('f1', at(2026, 10, 2), { plan: { ...DEFAULT_PLAN, boardIds: [], folderIds: ['hands'] } })]
+    expect(filterSessions(list, { ...NO_FILTER, query: 'close up' }, ctx, now).map((s) => s.id)).toEqual(['f1'])
+  })
+
   it('sorts oldest or longest first', () => {
     expect(ids({ sort: 'oldest' })[0]).toBe('old')
     expect(ids({ sort: 'longest' })[0]).toBe('challenge')
@@ -79,6 +84,7 @@ describe('history filters', () => {
     expect(sessionKind(sessions[2])).toBe('challenge')
     expect(sessionKind(session('r', 0, { redoOf: 'x' }))).toBe('redo')
     expect(sessionHas(sessions[0])).toEqual({ notes: true, drawings: false, marks: false, flagged: false })
+    expect(sessionHas(session('f', 0, { poses: [], note: 'loose sketch', drawings: ['/d.png'] }))).toEqual({ notes: true, drawings: true, marks: false, flagged: false })
   })
 
   it('groups by month, with totals', () => {

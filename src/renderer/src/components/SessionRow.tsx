@@ -10,6 +10,7 @@ import { Camera, Pen, Redo, Trash } from './Icons'
 export function describeSession(s: SessionRecord, challengeName?: string): string {
   if (s.challenge) return `${challengeName ?? 'Challenge'}, level ${s.challenge.level + 1}`
   if (s.redoOf) return 'Redo of flagged poses'
+  if (s.plan.mode === 'free') return 'Free drawing'
   if (s.plan.mode === 'relaxed') return 'Relaxed, no timer'
   if (s.plan.mode === 'memory') {
     const refs = new Set(s.poses.map((p) => p.imageId)).size
@@ -37,10 +38,18 @@ export function SessionRow({ session: s, showSkill, detail }: { session: Session
         onClick={() => go({ name: 'review', sessionId: s.id })}
         className="flex min-w-0 flex-1 items-center gap-4 text-left"
       >
-        <span className="flex shrink-0 -space-x-3">
-          {s.poses.slice(0, 3).map((p, k) => (
-            <img key={k} src={thumbUrl(p.imagePath, 96, p.keptPath)} alt="" loading="lazy" className="h-10 w-8 rounded object-cover ring-2 ring-bg" />
-          ))}
+        <span className="flex w-14 shrink-0 -space-x-3">
+          {s.plan.mode === 'free' ? (
+            s.drawings?.[0] ? (
+              <img src={thumbUrl(s.drawings[0], 96)} alt="" loading="lazy" className="h-10 w-12 rounded object-cover ring-2 ring-bg" />
+            ) : (
+              <span className="flex h-10 w-12 items-center justify-center rounded bg-surface text-muted ring-1 ring-line">
+                <Pen size={15} />
+              </span>
+            )
+          ) : (
+            s.poses.slice(0, 3).map((p, k) => <img key={k} src={thumbUrl(p.imagePath, 96, p.keptPath)} alt="" loading="lazy" className="h-10 w-8 rounded object-cover ring-2 ring-bg" />)
+          )}
         </span>
         <span className="w-44 shrink-0 text-ink">
           {new Date(s.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
@@ -61,7 +70,9 @@ export function SessionRow({ session: s, showSkill, detail }: { session: Session
           </span>
         )}
         <span className="tnum w-20 shrink-0 text-right text-ink">{formatDuration(s.activeMs / 1000)}</span>
-        <span className="w-24 shrink-0 text-right text-[12.5px] text-muted">{s.reviewed ? 'Reviewed' : s.finished ? 'Not reviewed' : 'Stopped early'}</span>
+        <span className="w-24 shrink-0 text-right text-[12.5px] text-muted">
+          {s.plan.mode === 'free' ? 'Free' : s.reviewed ? 'Reviewed' : s.finished ? 'Not reviewed' : 'Stopped early'}
+        </span>
       </button>
       {confirm ? (
         <span className="flex gap-1">

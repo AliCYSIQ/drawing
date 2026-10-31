@@ -4,6 +4,7 @@ import { _electron as electron, test } from '@playwright/test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { addFolder, folderTile, imageTile } from './lib'
 import { makeFixtures } from './make-fixtures'
 
 const out = process.env.SCREENSHOTS
@@ -44,10 +45,10 @@ test('screens', async () => {
 
   await shot('01-practice-empty')
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: 'Add folder' }).click()
+  await addFolder(page)
   await page.waitForTimeout(800)
   await shot('02-library')
-  await page.getByRole('button', { name: /^drawing-refs-/ }).first().dblclick()
+  await folderTile(page, /^drawing-refs-.*, folder/).first().click()
   await page.waitForTimeout(500)
   await shot('03-board')
 
@@ -136,8 +137,8 @@ test('screens', async () => {
   await page.getByRole('button', { name: 'Done' }).click()
 
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: /^drawing-refs-/ }).first().dblclick()
-  await page.getByRole('button', { name: 'Open image 2' }).click()
+  await folderTile(page, /^drawing-refs-.*, folder/).first().click()
+  await imageTile(page, 'pose-02').click()
   await page.getByRole('button', { name: 'Float on top' }).click()
   await page.waitForTimeout(600)
   await page.mouse.move(200, 200)

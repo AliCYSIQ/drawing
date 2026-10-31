@@ -28,6 +28,7 @@ const KINDS: { value: SessionKind; label: string }[] = [
   { value: 'class', label: 'Class' },
   { value: 'relaxed', label: 'Relaxed' },
   { value: 'memory', label: 'Memory' },
+  { value: 'free', label: 'Free drawing' },
   { value: 'challenge', label: 'Challenge' },
   { value: 'redo', label: 'Redo' }
 ]
@@ -43,13 +44,13 @@ let kept: HistoryFilter = NO_FILTER
 
 /**
  * Every session, newest first, grouped by month. Search finds notes,
- * mistakes, collections and challenges; filters narrow by date, kind,
+ * mistakes, folders and challenges; filters narrow by date, kind,
  * review state, what a session has, and skill. A day from the Stats heatmap
  * opens here filtered to that day.
  */
 export function History({ day }: { day?: string }) {
   const sessions = useApp((s) => s.sessions)
-  const boards = useApp((s) => s.boards)
+  const folders = useApp((s) => s.library.folders)
   const challenges = useApp((s) => s.challenges)
   const skills = useApp((s) => s.skills)
   const go = useApp((s) => s.go)
@@ -62,7 +63,7 @@ export function History({ day }: { day?: string }) {
     setShown(PAGE)
   }
 
-  const list = useMemo(() => filterSessions(sessions, filter, { boards, challenges, skills }), [sessions, filter, boards, challenges, skills])
+  const list = useMemo(() => filterSessions(sessions, filter, { folders, challenges, skills }), [sessions, filter, folders, challenges, skills])
   const groups = useMemo(() => groupByMonth(list.slice(0, shown), filter.sort !== 'longest'), [list, shown, filter.sort])
   const total = list.reduce((a, s) => a + s.activeMs, 0)
   const toggle = <T,>(arr: T[], v: T) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v])
@@ -87,7 +88,7 @@ export function History({ day }: { day?: string }) {
               type="search"
               aria-label="Search sessions"
               value={filter.query}
-              placeholder="Search notes, mistakes, collections"
+              placeholder="Search notes, mistakes, folders"
               onChange={(e) => setFilter({ query: e.target.value })}
               className="mr-2 h-8 w-72 rounded-full bg-surface px-3.5 text-[13px] text-ink outline-none ring-1 ring-line placeholder:text-muted/70 focus:ring-blue"
             />

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { FolderImport, FolderInfo } from '@shared/types'
-import { planImport, planTotals, type PlanNode } from '../lib/importPlan'
-import { Folder as FolderIcon, Images } from './Icons'
+import type { FolderInfo } from '@shared/types'
+import { planImport, planTotals, type ImportChoice, type PlanNode } from '../lib/importPlan'
+import { Folder as FolderIcon } from './Icons'
 import { Button } from './ui'
 
-export type ImportChoice = Exclude<FolderImport, 'ask'>
+export type { ImportChoice }
 
 export interface ImportOptions {
   choice: ImportChoice
@@ -46,9 +46,9 @@ export function ImportSheet({
     {
       value: 'split',
       title: 'Keep the folder structure',
-      hint: `“${info.name}” becomes a library folder. Sub-folders with only images become collections${deep ? '; sub-folders with their own sub-folders become folders, all levels down' : ''}.`
+      hint: `“${info.name}” and its sub-folders${deep ? ', all levels down,' : ''} become folders in the library. Each image stays in the folder it is in.`
     },
-    { value: 'one', title: 'One collection with everything', hint: `All the images in one collection “${info.name}”.` },
+    { value: 'one', title: 'One folder with everything', hint: `All the images in one folder “${info.name}”.` },
     {
       value: 'top',
       title: `Only the images directly in “${info.name}”`,
@@ -122,8 +122,7 @@ export function ImportSheet({
               {plan && (
                 <span className="tnum">
                   {': '}
-                  {totals.folders ? `${totals.folders} ${totals.folders === 1 ? 'folder' : 'folders'}, ` : ''}
-                  {totals.collections} {totals.collections === 1 ? 'collection' : 'collections'}, {totals.images} images
+                  {totals.folders} {totals.folders === 1 ? 'folder' : 'folders'}, {totals.images} images
                 </span>
               )}
             </div>
@@ -164,16 +163,18 @@ export function ImportSheet({
   )
 }
 
-/** One line of the preview tree: a folder with what's inside, or a collection with its image count. */
+/** One line of the preview tree: a folder and how many images sit directly in it. */
 function PreviewNode({ node, depth }: { node: PlanNode; depth: number }) {
   return (
     <>
       <div className="flex items-center gap-2 rounded px-1.5 py-0.5 text-[13px]" style={{ paddingLeft: 6 + depth * 18 }}>
-        {node.type === 'folder' ? <FolderIcon size={14} className="shrink-0 text-blue" /> : <Images size={14} className="shrink-0 text-muted" />}
+        <FolderIcon size={14} className="shrink-0 text-blue" />
         <span className="min-w-0 flex-1 truncate text-ink">{node.name}</span>
-        {node.type === 'collection' && <span className="tnum text-[12px] text-muted">{node.count}</span>}
+        <span className="tnum text-[12px] text-muted">{node.images ? `${node.images} ${node.images === 1 ? 'image' : 'images'}` : ''}</span>
       </div>
-      {node.type === 'folder' && node.children.map((c, i) => <PreviewNode key={`${c.name}-${i}`} node={c} depth={depth + 1} />)}
+      {node.children.map((c, i) => (
+        <PreviewNode key={`${c.name}-${i}`} node={c} depth={depth + 1} />
+      ))}
     </>
   )
 }

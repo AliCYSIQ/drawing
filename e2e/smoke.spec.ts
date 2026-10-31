@@ -2,6 +2,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { addFolder, folderTile, imageTile } from './lib'
 import { makeFixtures } from './make-fixtures'
 
 let app: ElectronApplication
@@ -32,7 +33,7 @@ test.afterAll(async () => {
 
 test('add a folder, draw a short session, review it, see it in stats', async () => {
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: 'Add folder' }).click()
+  await addFolder(page)
   await expect(page.getByText(/Added 4 images/)).toBeVisible()
 
   await page.getByRole('button', { name: 'Practice' }).click()
@@ -81,7 +82,7 @@ test('canvas capture saves the picked screen area at full resolution', async () 
     return { id: d.id, scale: d.scaleFactor }
   })
   const path = await page.evaluate(
-    (id) => window.api.capture({ displayId: id, x: 100, y: 80, width: 300, height: 200 }, 'capture-test', 0),
+    async (id) => (await window.api.capture({ kind: 'screen', region: { displayId: id, x: 100, y: 80, width: 300, height: 200 } }, 'capture-test', 0)).path,
     display.id
   )
   expect(path).toBeTruthy()
@@ -101,8 +102,8 @@ const stage = () => page.locator('.stage')
 test('float mode: controls show on click, not hover, and it turns off', async () => {
   await page.getByRole('button', { name: 'Done' }).click()
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: /^drawing-refs-/ }).first().dblclick()
-  await page.getByRole('button', { name: 'Open image 1' }).click()
+  await folderTile(page, /^drawing-refs-.*, folder/).first().click()
+  await imageTile(page, 'pose-01').click()
   await page.getByRole('button', { name: 'Float on top' }).click()
   expect((await windowState()).onTop).toBe(true)
 
@@ -118,7 +119,7 @@ test('float mode: controls show on click, not hover, and it turns off', async ()
 
 test('ending a session from float mode with click-through leaves a normal window', async () => {
   await page.keyboard.press('Escape') // leave the image viewer
-  await page.getByRole('button', { name: 'Practice' }).click()
+  await page.getByRole('button', { name: 'Practice', exact: true }).click()
   await page.getByRole('radio', { name: 'Classic' }).click()
   await page.getByRole('spinbutton', { name: 'Custom seconds' }).fill('30')
   await page.getByRole('spinbutton', { name: 'Number of poses' }).fill('2')

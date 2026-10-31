@@ -2,6 +2,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { addFolder } from './lib'
 import { makeFixtures } from './make-fixtures'
 
 let app: ElectronApplication
@@ -22,7 +23,7 @@ test.beforeAll(async () => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog
   }, refsDir)
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: 'Add folder' }).click()
+  await addFolder(page)
   await expect(page.getByText(/Added 3 images/)).toBeVisible()
 })
 
@@ -119,6 +120,14 @@ test('a challenge carries its skill into its sessions', async () => {
   await page.waitForTimeout(3500)
   await page.keyboard.press('Escape')
   await expect(page.getByText('Session saved.')).toBeVisible()
+  // Stopped early: the time counts, but the level is not done.
+  await page.waitForTimeout(400)
+  const saved = await page.evaluate(async () => ({
+    challenges: (await window.api.load<{ completed: number[] }[]>('challenges'))!,
+    sessions: (await window.api.load<{ finished: boolean; challenge?: unknown }[]>('sessions'))!
+  }))
+  expect(saved.challenges[0].completed).toEqual([])
+  expect(saved.sessions.find((s) => s.challenge)?.finished).toBe(false)
 
   await nav('Stats').click()
   await expect(skillRow('Gesture')).toContainText('1')

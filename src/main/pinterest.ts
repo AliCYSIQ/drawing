@@ -7,10 +7,13 @@
 // change; everything that depends on their shape is in this file, and
 // tests/pinterest.test.ts checks it against saved fixtures.
 
+import type { SyncDiagnostics } from '@shared/types'
+
 export interface PinImage {
   id: string
   url: string
 }
+
 
 export interface BoardPage {
   boardId: string
@@ -19,6 +22,8 @@ export interface BoardPage {
   resource: string
   options: Record<string, unknown>
   pins: PinImage[]
+  /** Items on the page that are not pictures. */
+  skipped: number
   bookmark: string | null
 }
 
@@ -32,7 +37,19 @@ export interface BoardResult {
   partial: boolean
   /** Pin count the board reports (0 when unknown). Video-only pins have no image, so a few less is normal. */
   expected: number
+  /** The board has more pins than `maxPins`; the rest were not read. */
+  limited: boolean
+  /** Items read that are not pictures (stories, ads, products). */
+  skipped: number
+  diagnostics: SyncDiagnostics
 }
+
+/**
+ * Most pins read in one sync. Very large boards would otherwise download
+ * gigabytes in one go; a sync that stops here says so, and the board can be
+ * split on Pinterest.
+ */
+export const MAX_PINS = 5000
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
@@ -101,18 +118,19 @@ export function parseBoardPage(html: string): BoardPage {
       resource,
       options,
       pins: (value.data ?? []).map(pinImage).filter((p): p is PinImage => !!p),
+      skipped: (value.data ?? []).filter((d) => !pinImage(d)).length,
       bookmark: value.nextBookmark && value.nextBookmark !== '-end-' ? value.nextBookmark : null
     }
   }
   throw new Error('Could not find the pins on this page. Is it a board link?')
 }
 
-export function parseFeedResponse(json: unknown): { pins: PinImage[]; bookmark: string | null } {
+export function parseFeedResponse(json: unknown): { pins: PinImage[]; bookmark: string | null; skipped: number } {
   const rr = (json as { resource_response?: { data?: unknown[]; bookmark?: string } })?.resource_response
   if (!rr || !Array.isArray(rr.data)) throw new Error('Unexpected reply from Pinterest.')
   const pins = rr.data.map(pinImage).filter((p): p is PinImage => !!p)
   const bookmark = rr.bookmark && rr.bookmark !== '-end-' ? rr.bookmark : null
-  return { pins, bookmark }
+  return { pins, bookmark, skipped: rr.data.length - pins.length }
 }
 
 /** The RSS feed only has the latest pins, at 236 px; 736 px versions exist at the same path. */
@@ -130,7 +148,7 @@ export function parseRss(xml: string): { name: string; pins: PinImage[] } {
   return { name, pins }
 }
 
-type FetchInit = { headers?: Record<string, string>; cache?: 'no-store' }
+type FetchInit = { headers?: Record<string, string>; cache?: 'no-store'; credentials?: 'omit' }
 type Fetch = (url: string, init?: FetchInit) => Promise<{
   ok: boolean
   status: number
@@ -151,12 +169,13 @@ export interface FetchBoardOptions {
 // Pinterest edge cache, which showed up as "5 pins, re-sync still 5".
 const FRESH: Pick<FetchInit, 'cache'> = { cache: 'no-store' }
 const NO_CACHE_HEADERS = { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
-const RETRY_DELAYS = [600, 1800]
+// Waits before each retry of a feed page; a 429 ("too many requests") waits longer.
+const RETRY_DELAYS = [600, 1800, 4000]
 
 export async function fetchBoard(input: string, opts: FetchBoardOptions = {}): Promise<BoardResult> {
   const doFetch: Fetch = opts.fetch ?? (globalThis.fetch as unknown as Fetch)
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
-  const maxPins = opts.maxPins ?? 2000
+  const maxPins = opts.maxPins ?? MAX_PINS
   let { url, path } = normalizeBoardUrl(input)
 
   const pageRes = await doFetch(`${url}?_=${Date.now()}`, {
@@ -167,66 +186,112 @@ export async function fetchBoard(input: string, opts: FetchBoardOptions = {}): P
   if (!path) ({ url, path } = normalizeBoardUrl(pageRes.url.split('?')[0])) // short pin.it link
   const html = await pageRes.text()
 
+  const diagnostics: SyncDiagnostics = { pages: [], duplicates: 0, rss: false, stop: 'end' }
   let page: BoardPage
   try {
     page = parseBoardPage(html)
   } catch (err) {
+    // The RSS feed only has the latest pins (about 25): never a whole board.
     const rss = await fetchRss(doFetch, path)
-    if (rss) return { ...rss, partial: true, expected: 0 }
+    if (rss) {
+      diagnostics.pages.push({ kind: 'rss', status: 200, tries: 1, pins: rss.pins.length, newPins: rss.pins.length, skipped: 0, next: false })
+      return { ...rss, partial: true, expected: 0, limited: false, skipped: 0, diagnostics: { ...diagnostics, rss: true, stop: 'rss' } }
+    }
     throw err
   }
 
   const seen = new Set<string>()
   const pins: PinImage[] = []
+  let limited = false
+  let skipped = page.skipped
+  /** Adds new pins; returns how many were new. */
   const add = (list: PinImage[]) => {
+    let fresh = 0
     for (const p of list) {
-      if (seen.has(p.id) || pins.length >= maxPins) continue
+      if (seen.has(p.id)) {
+        diagnostics.duplicates++
+        continue
+      }
+      if (pins.length >= maxPins) {
+        limited = true
+        continue
+      }
       seen.add(p.id)
       pins.push(p)
+      fresh++
     }
+    return fresh
   }
-  add(page.pins)
+  diagnostics.pages.push({ kind: 'page', status: pageRes.status, tries: 1, pins: page.pins.length, newPins: add(page.pins), skipped: page.skipped, next: !!page.bookmark })
   opts.onProgress?.(pins.length, page.pinCount)
 
   // One page of the feed: retried with backoff, then once more with the
   // smallest set of options, before giving up.
-  const feedPage = async (bookmark: string) => {
-    const attempts: Record<string, unknown>[] = [
-      ...RETRY_DELAYS.map(() => page.options),
-      page.options,
-      { board_id: page.boardId, page_size: 25 }
-    ]
+  const feedPage = async (bookmark: string | null) => {
+    const attempts: Record<string, unknown>[] = [...RETRY_DELAYS.map(() => page.options), page.options, { board_id: page.boardId, page_size: 25 }]
+    let status = 0
     for (let i = 0; i < attempts.length; i++) {
-      if (i > 0) await sleep(RETRY_DELAYS[Math.min(i - 1, RETRY_DELAYS.length - 1)])
-      const data = JSON.stringify({ options: { ...attempts[i], bookmarks: [bookmark] }, context: {} })
+      if (i > 0) await sleep(RETRY_DELAYS[Math.min(i - 1, RETRY_DELAYS.length - 1)] * (status === 429 ? 3 : 1))
+      const data = JSON.stringify({ options: { ...attempts[i], ...(bookmark ? { bookmarks: [bookmark] } : {}) }, context: {} })
       const feedUrl =
         `https://www.pinterest.com/resource/${page.resource}/get/` +
         `?source_url=${encodeURIComponent(path)}&data=${encodeURIComponent(data)}`
       try {
-        const res = await doFetch(feedUrl, { ...FRESH, headers: { ...feedHeaders(path), ...NO_CACHE_HEADERS } })
-        if (res.ok) return parseFeedResponse(JSON.parse(await res.text()))
+        const res = await doFetch(feedUrl, { ...FRESH, credentials: 'omit', headers: { ...feedHeaders(path), ...NO_CACHE_HEADERS } })
+        status = res.status
+        if (res.ok) return { ...parseFeedResponse(JSON.parse(await res.text())), status, tries: i + 1 }
       } catch {
         // network hiccup or a changed reply: try again
       }
     }
-    return null
+    return { failed: true as const, status, tries: attempts.length }
+  }
+  const read = async (bookmark: string | null) => {
+    const r = await feedPage(bookmark)
+    if ('failed' in r) {
+      diagnostics.pages.push({ kind: 'feed', status: r.status, tries: r.tries, pins: 0, newPins: 0, skipped: 0, next: false })
+      return null
+    }
+    diagnostics.pages.push({ kind: 'feed', status: r.status, tries: r.tries, pins: r.pins.length, newPins: add(r.pins), skipped: r.skipped, next: !!r.bookmark })
+    opts.onProgress?.(pins.length, page.pinCount)
+    return r
   }
 
   let complete = true
   let bookmark = page.bookmark
+  // The page sometimes holds only the first pins and no bookmark to go on
+  // from. Then the feed is read from its start instead.
+  if (!bookmark && page.pinCount > pins.length + page.skipped) {
+    const first = await read(null)
+    if (!first) complete = false
+    else {
+      skipped = Math.max(skipped, first.skipped)
+      bookmark = first.bookmark
+    }
+  }
   const usedBookmarks = new Set<string>()
-  while (bookmark && pins.length < maxPins && !usedBookmarks.has(bookmark)) {
+  while (bookmark && !limited) {
+    if (usedBookmarks.has(bookmark)) {
+      diagnostics.stop = 'repeated-bookmark'
+      break
+    }
     usedBookmarks.add(bookmark)
-    const next = await feedPage(bookmark)
+    const next = await read(bookmark)
     if (!next) {
       complete = false
       break
     }
-    add(next.pins)
-    opts.onProgress?.(pins.length, page.pinCount)
+    skipped += next.skipped
     bookmark = next.bookmark
   }
-  return { name: page.name, pins, partial: !complete, expected: page.pinCount }
+  if (!complete) diagnostics.stop = 'failed'
+  else if (limited) diagnostics.stop = 'limit'
+  else if (diagnostics.stop === 'end' && page.pinCount > pins.length + skipped) {
+    // Pinterest stopped listing pins before the count it shows: not a full sync.
+    diagnostics.stop = 'short'
+    complete = false
+  }
+  return { name: page.name, pins, partial: !complete, expected: page.pinCount, limited, skipped, diagnostics }
 }
 
 /** The resource endpoint answers 403 unless it is told which page handler is asking. */
