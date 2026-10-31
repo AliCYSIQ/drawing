@@ -17,7 +17,7 @@ import {
   type Step
 } from '../lib/sessionEngine'
 import { chime } from '../lib/sound'
-import { useApp } from '../store'
+import { captureFailed, captureNow, useApp } from '../store'
 
 export function Session() {
   const run = useApp((s) => s.run)
@@ -35,11 +35,12 @@ export function Session() {
     for (const ev of events) {
       if (ev.type === 'poseEnd') {
         if (settings.sound && ev.reason === 'time') chime('pose')
-        if (r.plan.capture && settings.captureRegion) {
+        if (r.plan.capture) {
           const index = ev.index
           pending.current.push(
-            window.api.capture(settings.captureRegion, r.id, index).then((path) => {
-              if (path) setCapture(index, path)
+            captureNow(r.id, index).then((c) => {
+              if (c.path) setCapture(index, c.path)
+              else captureFailed(c.error)
             })
           )
         }

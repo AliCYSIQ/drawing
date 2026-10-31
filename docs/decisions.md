@@ -2,6 +2,70 @@
 
 Why the app works the way it does. Newest first.
 
+## 2026-10-31: v0.3.0, capture and Pinterest reliability
+
+**Canvas capture takes a chosen window, not a screen area.**
+- **How it worked:** the main process asked `desktopCapturer` for a picture of the whole screen (`types: ['screen']`) and cropped the rectangle you had dragged on it (display id + position, saved in settings). It ran at the end of each pose, of each memory-mode drawing, and of a free drawing session. Whatever was on top in that rectangle was captured: a browser in front meant a picture of the browser. Only the app's own window was kept out (content protection).
+- **Now:** you choose a window (Settings, or the capture option on Practice), like PureRef's "pin to a window", then the whole window or a part of it dragged on its picture. The capture uses `desktopCapturer` window sources (`types: ['window']`), which take the window's own picture: tested with a window covered by another, it still came back as itself.
+- **Why not the Windows Graphics Capture picker:** Electron has no API for the system picker; the window list uses the same capture underneath and needs nothing extra (no hooks, no native modules).
+- **Finding it again:** Electron's source id holds the window handle, which only lasts while the window is open, so it is kept as a hint, not as the identity. The identity is the window's title: after the app was restarted, the window sharing at least half of the title words is used (so "Sketch.clip - CLIP STUDIO PAINT EX" finds "Hands.clip - CLIP STUDIO PAINT EX"). Two windows that match equally, or a reused handle whose title shares nothing, are never guessed: the capture fails with a message and you choose again.
+- **The part** is stored as shares (0–1) of the window's own picture, so it follows when the window is resized, moved to another monitor or rescaled. After a big layout change inside the app, choose it again.
+- **Never the desktop instead.** A minimized window isn't listed by Windows, a closed one is gone, an all-black picture counts as failed: each gives a message, never a substitute picture. A failed capture during a session only shows a message; the session goes on. Free drawing shows the capture before keeping it (Keep, Retake, or Save without a picture), and the session is safe meanwhile.
+- **Older setups** with a screen area keep working as they did; the setup screens say that this captures whatever is on top, and offer to choose a window.
+- **Limits:** windows of Chromium-based apps (browsers, Electron apps) may show their last painted frame while fully covered, because Chromium stops painting covered windows; native drawing apps keep painting. Elevated (administrator) windows and some protected windows can't be captured. A window's picture includes its frame (title bar); use "part of it" to leave that out.
+
+**Pinterest: the 25-of-35 board.** Traced on the board that showed it, inside the app:
+- The board page held its first 25 pins but, that time, no bookmark to the next page (Pinterest leaves it out on some answers). v0.2.5 stopped there and called the gap "videos". Then, reading the feed from its start through Electron's (Chromium's) network stack, the next page came back empty.
+- With Node's own HTTP client (`fetch` in the main process) the same requests page through normally: 25 + 10 = 35 pins, checked live twice. So board pages are now read with Node's fetch; images still download as before.
+- When Pinterest stops listing pins before its own count (and that isn't explained by non-picture items), the sync is marked partial ("short"), says so, and never offers to remove pins.
+- Every sync records what it read, page by page (status, tries, pins, new pins, next page or not, duplicates, RSS or not, why it stopped), in `data/logs/app.log`; the message after a sync uses it. A 429 ("too many requests") waits three times longer before retrying.
+- The RSS feed (about the latest 25 pins) is only a last resort and always counts as partial.
+- The official API would need an app registration and a Pinterest login (OAuth); not needed while public boards read reliably.
+
+## 2026-10-31: v0.3 decisions (data version 4)
+
+**One folder tree; no collections.** v0.2 had two ways to organize (library folders and collections), and every image had to sit in a collection, which made "(loose images)" collections up. Now there are only folders, as in Windows Explorer: a folder holds images, folders, both, or nothing.
+- **Three parts in `library.json`:** `folders` (the tree), `images` (an entry: one image in one folder) and `assets` (what the image is: its file, whether it's yours or stored by the app, where it came from, size and SHA-256). Where an image sits is kept apart from what it is and where its file lives.
+- **A Pinterest board or a linked disk folder is a folder with a `source`.** Its sync information lives there. The source only links: moving or deleting the folder in the library never touches the disk or the board.
+- **No shortcuts, no multi-parent entries.** A copy is a new entry (or a new folder of entries) that shares the asset, so no image bytes are copied.
+- **Copying a folder keeps its source.** A copy of a Pinterest folder can sync too; pins already saved anywhere are reused, never downloaded again.
+- **Moving and deleting are library-only.** Nothing the library does moves or deletes a file of yours. Images the app stored itself are removed at the next start, and only when no library image uses them (history keeps its own smaller copies, so it never depends on them).
+- **Undo and Redo** cover every library change in the session (Ctrl+Z, Ctrl+Y).
+
+**Image identity.** The old image id was worked out from the file path, so a renamed or moved file looked like a new image.
+- The asset id is now stored, and it stays when the file moves: Find folder and Rescan update the path, not the id.
+- A new asset still gets its first id from its path (the same formula as before), so images added again after being removed match their old history. If that id is taken by another file, it gets a new one.
+- **SHA-256** is the content check. Stored images get it when saved; linked files get it in the background, two at a time, never during a session. A rescan hashes only new files whose size matches a missing image (size is the cheap first check), and a match takes over the missing image's asset, history and favorite.
+- Pasted or downloaded images with the same bytes share one stored asset. Two different files on disk with the same bytes stay two assets (different files can change apart), but a session draws them once.
+
+**Migration (v3 → v4).** Each collection became a folder with the same id, in the folder it was in, holding its images; library folders stayed. Old image ids became asset ids, so history, favorites, review marks, presets, challenges and "fresh first" match without rewriting them. Plans keep `boardIds`; the app reads them as folder ids. Linked folders keep their path (flattened sub-folders as before, or top images only); Pinterest boards keep their link.
+- Backed up first (`data/backups/<date>-v3`), worked out in memory, checked (every collection and every image must be there, no image without an asset, no folder in a missing folder), written next to the old files, then swapped in, with the version written last. A migration cut short runs again and sees the library is already done. A failed check writes nothing and the app says so.
+- `boards.json` stays on disk untouched; the app no longer reads it.
+
+**Library interaction.** The single-click-selects / double-click-opens model was annoying in practice.
+- A click opens (a folder) or views (an image). The check in the tile's corner selects; it appears on hover, and on every tile once something is selected. Ctrl/Shift still select.
+- Browsing and picking what to practice are separate on Practice and Challenges too: a click opens a folder, the check (or "Pick this folder") picks it. **Practice this folder** in the Library goes straight to Practice with it picked.
+- One **Add** button (folder, images, Pinterest board) instead of four, so the toolbar stays short.
+- Ctrl+V pastes the library's own cut or copied items, unless you visited another app since then: then it pastes the image you copied there.
+
+**Free drawing** is a separate session kind, not Relaxed mode without references: Relaxed means drawing from references at your own pace, and keeps meaning that.
+- It's only a clock with pause, an optional skill and note, and an optional capture of the canvas area at the end (the same capture as timed sessions, saved as a picture of the session, not of a reference). A failed capture still saves the session.
+- It's a normal session record (`mode: 'free'`, no poses), so totals, streaks, skills and History count it with no special cases.
+- While running it is saved every 15 seconds (and on close); after a restart it comes back paused, counting time up to when the app last saw it running.
+- No journal, recorder, canvas or reference board: Clip Studio and PureRef do those.
+
+**Ending a session early** already saved it as "stopped early" with the time drawn, and only a finished challenge level counted. Closing the app in the middle of a session lost it; now it is saved as stopped early too. No extra "count it?" question: deleting a session from History does that job.
+
+**One zoom everywhere.** The pan/zoom from Review (scroll zooms at the pointer, drag moves, double-click fits) now also runs in sessions, the image viewer, challenges and memory study. In float mode the left button still moves the window; the right or middle button pans.
+
+**Review.** Removing a capture or photo asks first and can still be undone. Marks made in overlay are kept apart from side-by-side marks on the same drawing, so Clear in one layout never clears the other, and switching layouts never loses marks. (Marks made in overlay before this version were stored with the side-by-side ones and stay there.)
+
+**Pinterest.** Adding a board link always makes a new folder; an existing one updates with its own Sync. Folders are never matched to boards by name.
+- The sync never deletes. A complete sync lists pins that left the board and asks: keep (default) or remove from the folder. Partial or capped syncs list nothing.
+- The "25 pins, the rest were videos" report came from a board page that held its first pins but no bookmark to continue; the sync now reads the feed from its start in that case.
+- The limit is 5,000 pins per sync (it was 2,000), and reaching it is reported. Non-picture items are counted and reported, instead of guessing that the gap is videos.
+- Pagination is tested with mocked responses; live behavior was not verified in this update (`PINTEREST_LIVE` test).
+
 ## 2026-10-09: v0.2.5 decisions
 
 **Click-through lag and crashes.** Three causes in the float code, fixed:

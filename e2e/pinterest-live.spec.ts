@@ -19,11 +19,11 @@ test('sync a public Pinterest board inside the app', async () => {
   // Sync twice: the second sync must fetch the board again, not reuse the first answer.
   for (const round of [1, 2]) {
     const result = await page.evaluate((url) => window.api.importPinterest('live-test', url), board!)
-    console.log(`sync ${round}: ${result.name}: ${result.images.length} images`, result.report)
+    console.log(`sync ${round}: ${result.name}: ${result.pins.length} images`, JSON.stringify(result.report, null, 1))
     expect(result.report.partial).toBe(false)
     expect(result.report.failed).toBe(0)
-    expect(result.images.length).toBeGreaterThan(0)
-    expect(result.images.every((i) => existsSync(i.path))).toBe(true)
+    expect(result.pins.length).toBeGreaterThan(0)
+    expect(result.pins.every((i) => existsSync(i.path))).toBe(true)
   }
   await app.close()
   rmSync(dataDir, { recursive: true, force: true })

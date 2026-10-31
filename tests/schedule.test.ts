@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { Board, ImageRef, SessionPlan } from '@shared/types'
+import type { Asset, ImageRef, LibraryImage, SessionPlan } from '@shared/types'
 import { DEFAULT_PLAN } from '@shared/types'
+import { poolFor } from '@renderer/lib/library'
 import {
   describeBlocks,
   estimateSeconds,
   pickImages,
-  poolFromBoards,
   recentlySeen,
   slotsForPlan
 } from '@renderer/lib/schedule'
@@ -21,10 +21,17 @@ function seeded(seed = 1) {
 }
 
 describe('schedule', () => {
-  it('merges boards without duplicate images', () => {
-    const a: Board = { id: 'a', name: 'A', kind: 'folder', tags: [], images: imgs(3), createdAt: 0 }
-    const b: Board = { id: 'b', name: 'B', kind: 'folder', tags: [], images: imgs(2), createdAt: 0 }
-    expect(poolFromBoards([a, b], ['a', 'b'])).toHaveLength(3)
+  it('merges folders without duplicate images', () => {
+    const assets: Asset[] = imgs(3).map((r) => ({ ...r, storage: 'linked', origin: 'folder', addedAt: 0 }))
+    const entry = (folderId: string, assetId: string): LibraryImage => ({ id: `${folderId}-${assetId}`, assetId, folderId, name: assetId, createdAt: 0 })
+    const lib = {
+      folders: [
+        { id: 'a', name: 'A', createdAt: 0 },
+        { id: 'b', name: 'B', createdAt: 0 }
+      ],
+      images: [...['i0', 'i1', 'i2'].map((id) => entry('a', id)), ...['i0', 'i1'].map((id) => entry('b', id))]
+    }
+    expect(poolFor(lib, assets, ['a', 'b'])).toHaveLength(3)
   })
 
   it('never repeats an image until the pool is used up', () => {

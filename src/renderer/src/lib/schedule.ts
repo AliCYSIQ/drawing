@@ -1,23 +1,10 @@
-import type { Block, Board, ImageRef, Level, SessionPlan } from '@shared/types'
+import type { Block, ImageRef, Level, SessionPlan } from '@shared/types'
 import type { Slot } from './sessionEngine'
 
 export type Rng = () => number
 
-/** Every image in the chosen boards, without duplicates. */
-export function poolFromBoards(boards: Board[], boardIds: string[]): ImageRef[] {
-  const seen = new Set<string>()
-  const pool: ImageRef[] = []
-  for (const id of boardIds) {
-    const board = boards.find((b) => b.id === id)
-    if (!board) continue
-    for (const img of board.images) {
-      if (seen.has(img.id)) continue
-      seen.add(img.id)
-      pool.push(img)
-    }
-  }
-  return pool
-}
+// The images to draw come from poolFor (lib/library.ts): every image in the
+// picked folders, each once.
 
 export function shuffled<T>(list: T[], rng: Rng = Math.random): T[] {
   const a = list.slice()

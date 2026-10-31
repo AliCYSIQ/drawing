@@ -30,7 +30,7 @@ export function StartOver() {
 
 function StartOverDialog({ onClose }: { onClose: () => void }) {
   const sessions = useApp((s) => s.sessions.length)
-  const boards = useApp((s) => s.boards.length)
+  const images = useApp((s) => s.library.images.length)
   const folders = useApp((s) => s.library.folders.length)
   const skills = useApp((s) => s.skills.length)
   const presets = useApp((s) => s.presets.length)
@@ -48,7 +48,7 @@ function StartOverDialog({ onClose }: { onClose: () => void }) {
   const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
   const rows: { part: ResetPart; label: string; detail: string }[] = [
     { part: 'history', label: 'History and stats', detail: `${n(sessions, 'session', 'sessions')}, with captures, photos and marks; challenge progress starts over` },
-    { part: 'library', label: 'Library', detail: `${n(boards, 'collection', 'collections')}, ${n(folders, 'folder', 'folders')}, favorites and stored images. Your own folders on disk are never touched.` },
+    { part: 'library', label: 'Library', detail: `${n(folders, 'folder', 'folders')}, ${n(images, 'image', 'images')}, favorites and stored images. Your own folders on disk are never touched.` },
     { part: 'skills', label: 'Skills', detail: n(skills, 'skill', 'skills') },
     { part: 'presets', label: 'Presets and challenges', detail: `${n(presets, 'preset', 'presets')}, ${n(challenges, 'challenge', 'challenges')}` },
     { part: 'settings', label: 'Settings', detail: 'Theme, hotkeys, canvas area, interface size, window size' }

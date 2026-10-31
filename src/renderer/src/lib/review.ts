@@ -6,6 +6,15 @@ import type { PoseResult, SessionRecord, Stroke } from '@shared/types'
 /** Marks on the reference are stored with the drawing marks, under this key. */
 export const REFERENCE_KEY = '@reference'
 
+/**
+ * Marks made in overlay (your drawing over the reference) are kept apart
+ * from the side-by-side marks on the same drawing, under this key, so
+ * clearing one layout never clears the other.
+ */
+export function overlayKey(path: string): string {
+  return `@overlay:${path}`
+}
+
 export type SourceKind = 'capture' | 'photo' | 'page'
 
 export interface SourceRef {
@@ -27,10 +36,18 @@ export function renameSource(session: SessionRecord, path: string, name: string)
   return { ...session, labels }
 }
 
+/** A drawing's marks in both layouts, by key. */
+function marksOf(pose: PoseResult | undefined, path: string): Record<string, Stroke[]> {
+  const out: Record<string, Stroke[]> = {}
+  for (const key of [path, overlayKey(path)]) if (pose?.marks?.[key]) out[key] = pose.marks[key]
+  return out
+}
+
 function withoutMarks(pose: PoseResult, path: string): PoseResult {
-  if (!pose.marks || !(path in pose.marks)) return pose
+  if (!pose.marks || !(path in pose.marks || overlayKey(path) in pose.marks)) return pose
   const marks = { ...pose.marks }
   delete marks[path]
+  delete marks[overlayKey(path)]
   return { ...pose, marks }
 }
 
@@ -57,8 +74,11 @@ export function removeSource(
 
   if (kind === 'page') {
     const at = session.pagePhotos.indexOf(path)
-    const marks = new Map<number, Stroke[]>()
-    session.poses.forEach((p, i) => p.marks?.[path] && marks.set(i, p.marks[path]))
+    const marks = new Map<number, Record<string, Stroke[]>>()
+    session.poses.forEach((p, i) => {
+      const m = marksOf(p, path)
+      if (Object.keys(m).length) marks.set(i, m)
+    })
     const next = withoutLabel(
       { ...session, pagePhotos: session.pagePhotos.filter((p) => p !== path), poses: session.poses.map((p) => withoutMarks(p, path)) },
       path
@@ -67,14 +87,15 @@ export function removeSource(
       if (cur.pagePhotos.includes(path)) return cur
       const pagePhotos = cur.pagePhotos.slice()
       pagePhotos.splice(Math.min(Math.max(at, 0), pagePhotos.length), 0, path)
-      const poses = cur.poses.map((p, i) => (marks.has(i) ? { ...p, marks: { ...p.marks, [path]: marks.get(i)! } } : p))
+      const poses = cur.poses.map((p, i) => (marks.has(i) ? { ...p, marks: { ...p.marks, ...marks.get(i)! } } : p))
       return restoreLabel({ ...cur, pagePhotos, poses })
     }
     return { session: next, undo }
   }
 
   const pose = session.poses[poseIndex]
-  const strokes = pose?.marks?.[path]
+  const own = marksOf(pose, path)
+  const strokes = Object.keys(own).length ? own : undefined
   const setPose = (s: SessionRecord, fn: (p: PoseResult) => PoseResult): SessionRecord => ({
     ...s,
     poses: s.poses.map((p, i) => (i === poseIndex ? fn(p) : p))
@@ -93,7 +114,7 @@ export function removeSource(
       cur.poses[poseIndex]?.capturePath
         ? cur
         : restoreLabel(
-            setPose(cur, (p) => ({ ...p, capturePath: path, ...(strokes ? { marks: { ...p.marks, [path]: strokes } } : {}) }))
+            setPose(cur, (p) => ({ ...p, capturePath: path, ...(strokes ? { marks: { ...p.marks, ...strokes } } : {}) }))
           )
     return { session: next, undo }
   }
@@ -109,7 +130,7 @@ export function removeSource(
       setPose(cur, (p) => {
         const photos = (p.photos ?? []).slice()
         photos.splice(Math.min(Math.max(at, 0), photos.length), 0, path)
-        return { ...p, photos, ...(strokes ? { marks: { ...p.marks, [path]: strokes } } : {}) }
+        return { ...p, photos, ...(strokes ? { marks: { ...p.marks, ...strokes } } : {}) }
       })
     )
   }
@@ -118,7 +139,7 @@ export function removeSource(
 
 /** Every capture and photo file a session still uses. */
 export function filesInUse(session: SessionRecord): Set<string> {
-  const out = new Set(session.pagePhotos)
+  const out = new Set([...session.pagePhotos, ...(session.drawings ?? [])])
   for (const p of session.poses) {
     if (p.capturePath) out.add(p.capturePath)
     for (const ph of p.photos ?? []) out.add(ph)

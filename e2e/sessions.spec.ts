@@ -2,6 +2,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { addFolder, folderTile, imageTile } from './lib'
 import { makeFixtures } from './make-fixtures'
 
 let app: ElectronApplication
@@ -22,7 +23,7 @@ test.beforeAll(async () => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog
   }, refsDir)
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: 'Add folder' }).click()
+  await addFolder(page)
   await expect(page.getByText(/Added 4 images/)).toBeVisible()
 })
 
@@ -89,13 +90,13 @@ test('favorites only uses just the starred images', async () => {
   await expect(page.getByRole('button', { name: 'Start drawing' })).toBeDisabled()
 
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: /^refs-/ }).dblclick()
-  await page.getByRole('button', { name: 'Open image 1' }).hover()
-  await page.getByRole('button', { name: 'Add image to favorites' }).first().click()
+  await folderTile(page, /^refs-.*, folder/).click()
+  await imageTile(page, 'pose-01').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Add to favorites' }).click()
   await practice()
   await page.getByRole('spinbutton', { name: 'Number of poses' }).fill('0')
   await expect(page.getByText('4 poses')).toBeVisible()
   await page.getByRole('switch', { name: /Favorites only/ }).click()
-  await expect(page.getByText('1 favorite image in these boards.')).toBeVisible()
+  await expect(page.getByText('1 favorite image in these folders.')).toBeVisible()
   await expect(page.getByText('1 pose', { exact: true })).toBeVisible()
 })

@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { TitleBar, WindowButtons } from './components/TitleBar'
 import { UpdateBanner } from './components/UpdateBanner'
 import { Challenges } from './pages/Challenges'
+import { FreeSession } from './pages/FreeSession'
 import { History } from './pages/History'
 import { Library } from './pages/Library'
 import { MemorySession } from './pages/MemorySession'
@@ -20,6 +21,7 @@ export function App() {
   const theme = useApp((s) => s.settings.theme)
   const toast = useApp((s) => s.toast)
   const run = useApp((s) => s.run)
+  const free = useApp((s) => s.free)
 
   const uiScale = useApp((s) => s.settings.uiScale)
 
@@ -68,10 +70,10 @@ export function App() {
       page = <Practice />
       break
     case 'library':
-      page = <Library key={view.folderId ?? "top"} boardId={view.boardId} folderId={view.folderId} />
+      page = <Library key={view.folderId ?? 'top'} folderId={view.folderId} />
       break
     case 'viewer':
-      page = <Viewer boardId={view.boardId} index={view.index} />
+      page = <Viewer entryId={view.entryId} />
       break
     case 'challenges':
       page = <Challenges challengeId={view.challengeId} />
@@ -86,7 +88,7 @@ export function App() {
       page = <Settings />
       break
     case 'session':
-      page = run?.memory ? <MemorySession /> : <Session />
+      page = free ? <FreeSession /> : run?.memory ? <MemorySession /> : <Session />
       break
     case 'review':
       page = <Review sessionId={view.sessionId} />

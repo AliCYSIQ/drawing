@@ -2,6 +2,7 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { addFolder } from './lib'
 import { makeFixtures } from './make-fixtures'
 
 test('start over keeping the library, then restore the backup', async () => {
@@ -16,9 +17,9 @@ test('start over keeping the library, then restore the backup', async () => {
   const data = (name: string) => join(dataDir, 'data', name)
   const read = (name: string) => JSON.parse(readFileSync(data(name), 'utf8'))
 
-  // Some data: a collection, a skill, a short session.
+  // Some data: a folder of images, a skill, a short session.
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: 'Add folder' }).click()
+  await addFolder(page)
   await page.getByRole('button', { name: 'Settings' }).click()
   await page.getByRole('textbox', { name: 'New skill name' }).fill('Gesture')
   await page.keyboard.press('Enter')
@@ -46,7 +47,7 @@ test('start over keeping the library, then restore the backup', async () => {
   // The page reloads: history and skills are empty, the library is still there.
   await expect(page.getByRole('heading', { name: 'What do you want to draw?' })).toBeVisible({ timeout: 10_000 })
   await expect.poll(() => existsSync(data('sessions.json'))).toBe(false)
-  expect(read('boards.json')).toHaveLength(1)
+  expect(read('library.json').images).toHaveLength(3)
   expect(existsSync(data('skills.json'))).toBe(false)
   expect(read('settings.json').schemaVersion).toBeGreaterThan(0)
   const backups = readdirSync(data('backups'))

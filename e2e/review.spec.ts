@@ -2,6 +2,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { addFolder } from './lib'
 import { makeFixtures } from './make-fixtures'
 
 let app: ElectronApplication
@@ -32,7 +33,7 @@ test.beforeAll(async () => {
     ipcMain.handle('capture:pickRegion', () => ({ displayId: d.id, x: 0, y: 0, width: 300, height: 400 }))
   }, { dir: refsDir, file: photo })
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: 'Add folder' }).click()
+  await addFolder(page)
   await expect(page.getByText(/Added 3 images/)).toBeVisible()
 })
 
@@ -47,10 +48,11 @@ async function shortSession(capture: boolean) {
   await page.getByRole('radio', { name: 'Classic' }).click()
   await page.getByRole('spinbutton', { name: 'Custom seconds' }).fill('2')
   await page.getByRole('spinbutton', { name: 'Number of poses' }).fill('2')
-  const toggle = page.getByRole('switch', { name: /Capture my Clip Studio canvas/ })
+  const toggle = page.getByRole('switch', { name: /Capture my canvas/ })
   if ((await toggle.getAttribute('aria-checked')) !== String(capture)) await toggle.click()
-  if (capture && (await page.getByRole('button', { name: 'Pick canvas area' }).count())) {
-    await page.getByRole('button', { name: 'Pick canvas area' }).click()
+  // The test answers the screen-area picker itself (a window choice is tested in capture.spec.ts).
+  if (capture && (await page.getByRole('button', { name: 'or use a fixed screen area' }).count())) {
+    await page.getByRole('button', { name: 'or use a fixed screen area' }).click()
   }
   await page.getByRole('button', { name: 'Start drawing' }).click()
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible({ timeout: 15_000 })
@@ -82,9 +84,15 @@ test('with a canvas capture, an added photo still shows (and can be switched to)
   await page.keyboard.press('Enter')
   await expect(page.getByRole('tab', { name: 'Sketchbook' })).toBeVisible()
 
-  // Remove with the × on the tab; Undo brings it back.
+  // Remove with the × on the tab: it asks first, and Undo brings it back.
   await page.getByRole('tab', { name: 'Sketchbook' }).hover()
   await page.getByRole('button', { name: 'Remove Sketchbook' }).click()
+  const confirm = page.getByRole('dialog', { name: 'Remove image' })
+  await confirm.getByRole('button', { name: 'Keep it' }).click()
+  await expect(page.getByRole('tab', { name: 'Sketchbook' })).toBeVisible()
+  await page.getByRole('tab', { name: 'Sketchbook' }).hover()
+  await page.getByRole('button', { name: 'Remove Sketchbook' }).click()
+  await confirm.getByRole('button', { name: 'Remove' }).click()
   await expect(page.getByRole('tab', { name: 'Sketchbook' })).toHaveCount(0)
   await expect(page.getByRole('tab', { name: 'Canvas capture' })).toHaveAttribute('aria-selected', 'true')
   expect((await savedPose()).photos ?? []).toHaveLength(0)
@@ -128,18 +136,33 @@ test('with only a photo, side by side, overlay and the pen work', async () => {
   await stroke(page.locator('canvas').first())
   expect((await savedPose()).marks?.['@reference']).toHaveLength(1)
 
-  // Overlay: marks go on your drawing.
+  // Side by side gets a mark on the drawing again, to check the layouts stay apart.
+  await stroke(page.locator('canvas').last())
+  expect((await savedPose()).marks?.[photoPath]).toHaveLength(1)
+
+  // Overlay: marks go on your drawing, kept apart from the side-by-side ones.
+  const overlayKey = `@overlay:${photoPath}`
   await page.getByRole('radio', { name: 'Overlay' }).click()
   await expect(page.getByText(/Draw to mark/)).toBeVisible()
   await stroke(page.locator('canvas').last())
+  expect((await savedPose()).marks?.[overlayKey]).toHaveLength(1)
   expect((await savedPose()).marks?.[photoPath]).toHaveLength(1)
-  await page.getByRole('radio', { name: 'Side by side' }).click()
-
-  // One Clear for the reference and this drawing, with Undo.
+  // Clearing in overlay leaves side by side alone.
   await page.getByRole('button', { name: 'Clear marks' }).click()
   let after = await savedPose()
+  expect(after.marks?.[overlayKey]).toHaveLength(0)
+  expect(after.marks?.[photoPath]).toHaveLength(1)
+  expect(after.marks?.['@reference']).toHaveLength(1)
+  await page.getByRole('button', { name: 'Undo', exact: true }).last().click()
+  expect((await savedPose()).marks?.[overlayKey]).toHaveLength(1)
+  await page.getByRole('radio', { name: 'Side by side' }).click()
+
+  // In side by side, one Clear for the reference and this drawing, with Undo; overlay keeps its marks.
+  await page.getByRole('button', { name: 'Clear marks' }).click()
+  after = await savedPose()
   expect(after.marks?.['@reference']).toHaveLength(0)
   expect(after.marks?.[photoPath]).toHaveLength(0)
+  expect(after.marks?.[overlayKey]).toHaveLength(1)
   await page.getByRole('button', { name: 'Undo', exact: true }).last().click()
   after = await savedPose()
   expect(after.marks?.['@reference']).toHaveLength(1)

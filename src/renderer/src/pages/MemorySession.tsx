@@ -21,7 +21,7 @@ import {
   type MemoryStep
 } from '../lib/memoryEngine'
 import { chime } from '../lib/sound'
-import { useApp } from '../store'
+import { captureFailed, captureNow, useApp } from '../store'
 
 /**
  * Memory mode, after the study loop from Kim Jung Gi's memory practice:
@@ -61,10 +61,11 @@ export function MemorySession() {
           mistakes: [],
           redo: false
         })
-        if (r.plan.capture && st.settings.captureRegion) {
+        if (r.plan.capture) {
           pending.current.push(
-            window.api.capture(st.settings.captureRegion, r.id, idx).then((path) => {
-              if (path) useApp.getState().updateResult(idx, { capturePath: path })
+            captureNow(r.id, idx).then((c) => {
+              if (c.path) useApp.getState().updateResult(idx, { capturePath: c.path })
+              else captureFailed(c.error)
             })
           )
         }

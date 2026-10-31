@@ -3,35 +3,38 @@
  * src/main/migrate.ts whenever saved data changes shape.
  * 1 = v0.1 (fixed categories). 2 = free tags, folders, favorites.
  * 3 = v0.2.5: no shortcuts (they became copies).
+ * 4 = v0.3: one folder tree. Collections became folders, images are entries
+ *     in folders, and what an image is (its asset) is kept apart from where
+ *     it sits in the library.
  */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
+
+import type { CaptureWindow } from './capture'
 
 /** Offered when typing a tag. Only suggestions: any tag can be added. */
 export const SUGGESTED_TAGS = ['figures', 'faces', 'hands', 'feet', 'animals', 'creatures', 'clothing', 'props', 'environments']
 
+/** v0.2 collection kinds; only read when migrating old data. */
 export type BoardKind = 'folder' | 'files' | 'pinterest' | 'collection'
 
+/** An image to draw: its asset id and where its file is. */
 export interface ImageRef {
-  /** Stable id, derived from the path the image was first added from; kept when a folder is relinked. */
+  /** The asset id (see Asset). History, favorites and "fresh first" use it. */
   id: string
-  /** Absolute path on disk (Pinterest and collection images live in the app's data folder). */
+  /** Absolute path on disk (stored images live in the app's data folder). */
   path: string
   sourceUrl?: string
 }
 
-/** A collection of references ("board"). */
+/** A v0.2 collection ("board"). Only read when migrating old data (data version 3 and older). */
 export interface Board {
   id: string
   name: string
   kind: BoardKind
-  /** Free tags, e.g. "hands", "project A". */
   tags: string[]
-  /** Home folder; none = top level of the library. */
   folderId?: string
   favorite?: boolean
-  /** Folder path or Pinterest URL. */
   source?: string
-  /** Linked folders: false = only the images directly in the folder, not its sub-folders. */
   recursive?: boolean
   images: ImageRef[]
   createdAt: number
@@ -62,29 +65,107 @@ export interface FolderInfo {
   tree: FolderTree
 }
 
-/** A folder in the library. Holds folders and collections, like a folder in Windows. */
+/** An image file found on disk or saved by the app. */
+export interface FoundFile {
+  path: string
+  /** The id a new asset for this file gets (worked out from the path, as image ids always were), unless it is taken. */
+  id: string
+  size: number
+  /** SHA-256 of the bytes, when it was worked out. */
+  sha256?: string
+}
+
+/** One disk folder in a scan, with its own images (not its sub-folders'). */
+export interface ScannedDir {
+  path: string
+  name: string
+  /** The disk folder it is in; none for the scanned folder itself. */
+  parent?: string
+  files: FoundFile[]
+}
+
+/**
+ * Where a folder's images come from when it mirrors something outside the
+ * app. Rescan or Sync brings it up to date. It is only a link: moving or
+ * deleting the library folder never touches the disk folder or the board.
+ */
+export type FolderSource =
+  | {
+      kind: 'disk'
+      path: string
+      /**
+       * tree: the images directly in `path`; its sub-folders are folders inside this one.
+       * flat: every image under `path`, sub-folders included, all in this folder.
+       * top: only the images directly in `path`; sub-folders are left out.
+       */
+      include: 'tree' | 'flat' | 'top'
+      /** Disk sub-folders it leaves out (not picked when adding, or removed from the library), so a rescan doesn't bring them back. */
+      skip?: string[]
+      syncedAt?: number
+    }
+  | { kind: 'pinterest'; url: string; syncedAt?: number }
+
+/** A folder in the library. Holds folders and images, like a folder in Windows. */
 export interface Folder {
   id: string
   name: string
+  /** none = top level of the library. */
   parentId?: string
+  createdAt: number
+  /** Free tags, e.g. "hands", "project A". */
+  tags?: string[]
+  favorite?: boolean
+  source?: FolderSource
   /** Data version 2 only: collections shown here as shortcuts. Version 3 turned them into copies. */
   shortcuts?: string[]
+}
+
+/**
+ * One image in a folder. A copy is another entry of the same asset, so the
+ * picture's bytes are kept once. Moving or deleting an entry never touches
+ * a file on disk.
+ */
+export interface LibraryImage {
+  id: string
+  assetId: string
+  /** none = top level of the library. */
+  folderId?: string
+  name: string
   createdAt: number
 }
 
-/** Library data that isn't a collection: folders and favorite images. */
-export interface LibraryMeta {
-  folders: Folder[]
-  /** Image ids marked as favorites, across all collections. */
-  favoriteImages: string[]
-  /**
-   * Deleted collections whose image files (pasted, Pinterest) are removed at
-   * the next start, so Undo works until then.
-   */
-  pendingDelete?: string[]
+/**
+ * What an image is, apart from where it sits in the library. The id stays
+ * when the file moves (relink, rescan), so history and favorites follow it.
+ */
+export interface Asset {
+  id: string
+  path: string
+  /** linked: your own file, never moved or deleted by the app. stored: a copy in the app's data folder. */
+  storage: 'linked' | 'stored'
+  /** How it came in. */
+  origin: 'file' | 'folder' | 'paste' | 'web' | 'pinterest' | 'copy'
+  sourceUrl?: string
+  /** Pinterest pin id, so a sync never downloads a pin twice. */
+  pinId?: string
+  size?: number
+  /** SHA-256 of the bytes: duplicates and moved files are recognised by it. */
+  sha256?: string
+  addedAt: number
 }
 
-export const EMPTY_LIBRARY: LibraryMeta = { folders: [], favoriteImages: [] }
+/** Everything in the library. */
+export interface LibraryData {
+  /** 4: the folder-tree library. Library files from before have no `format`. */
+  format?: 4
+  folders: Folder[]
+  images: LibraryImage[]
+  assets: Asset[]
+  /** Asset ids marked as favorites, wherever the image is. */
+  favoriteImages: string[]
+}
+
+export const EMPTY_LIBRARY: LibraryData = { format: 4, folders: [], images: [], assets: [], favoriteImages: [] }
 
 /** `seconds: 0` means untimed (you press next yourself). */
 export interface Block {
@@ -95,8 +176,9 @@ export interface Block {
 /**
  * Classic: one time for every pose. Class: blocks that get longer. Relaxed: no timer.
  * Memory: study a reference, hide it, draw it from memory, reveal and correct, repeat.
+ * Free: no references, only a clock; you draw whatever you like elsewhere.
  */
-export type SessionMode = 'classic' | 'class' | 'relaxed' | 'memory'
+export type SessionMode = 'classic' | 'class' | 'relaxed' | 'memory' | 'free'
 
 export interface MemoryOptions {
   /** Seconds to study each reference before it hides. */
@@ -114,8 +196,9 @@ export interface Skill {
 }
 
 export interface SessionPlan {
+  /** Data version 3 and older: picked collections. They are folders now (same ids), so they count like folderIds. */
   boardIds: string[]
-  /** Whole library folders: everything inside them, including collections added later. */
+  /** Library folders: every image inside them, sub-folders included. */
   folderIds?: string[]
   /** The skill this session practices; none = not tagged. Review can change it afterwards. */
   skillId?: string
@@ -197,15 +280,19 @@ export interface SessionRecord {
   activeMs: number
   plan: SessionPlan
   poses: PoseResult[]
-  /** True when the session reached its last pose instead of being stopped early. */
+  /** True when the session reached its last pose instead of being stopped early (free drawing: always true). */
   finished: boolean
   reviewed: boolean
   /** Photos of whole paper pages (several drawings each), attached during review. */
   pagePhotos: string[]
   /** Your own names for captures and photos, by file path ("Page 1" → "Sketchbook p. 12"). */
   labels?: Record<string, string>
-  /** Names of the collections when the session was drawn, for searching history after renames. */
+  /** Names of the folders (collections before v0.3) when the session was drawn, for searching history after renames. */
   boardNames?: string[]
+  /** Free drawing: a note about the session. */
+  note?: string
+  /** Free drawing: pictures of the whole drawing (the canvas capture at the end). */
+  drawings?: string[]
   challenge?: { challengeId: string; level: number }
   redoOf?: string
 }
@@ -225,6 +312,7 @@ export interface Challenge {
   name: string
   kind: 'ladder' | 'custom'
   ladder?: LadderKind
+  /** Like SessionPlan.boardIds: old collection ids, which are folder ids now. */
   boardIds: string[]
   /** Whole library folders, like a session plan's. */
   folderIds?: string[]
@@ -267,9 +355,8 @@ export type HotkeyAction = keyof Hotkeys
 
 /**
  * What to do with sub-folders when adding a folder. 'ask' shows the choice
- * each time. 'split' keeps the folder structure (folders and collections,
- * all levels down); 'one' makes one collection; 'top' takes only the images
- * directly in the folder.
+ * each time. 'split' keeps the folder structure, all levels down; 'one' puts
+ * every image in one folder; 'top' takes only the images directly in the folder.
  */
 export type FolderImport = 'ask' | 'one' | 'split' | 'top'
 
@@ -298,11 +385,32 @@ export interface Settings {
   /** Numbers and line, or only the progress line (calmer). */
   timerDisplay: 'clock' | 'line'
   hotkeys: Hotkeys
+  /** Older setups: a fixed screen area to capture. A chosen window (captureWindow) is used instead when there is one. */
   captureRegion?: Region
+  /** The window canvas captures take, and which part of it. */
+  captureWindow?: CaptureWindow
   float: FloatState
   lastPlan?: SessionPlan
   /** Library order: folders first, then by this. */
   librarySort?: 'name' | 'added' | 'practiced' | 'size'
+  /** Free drawing: capture the canvas area when the session ends. */
+  freeCapture?: boolean
+  /** A free drawing session that is still going, so it survives a restart. */
+  freeRun?: FreeRun
+}
+
+/** A free drawing session in progress. Time is kept as timestamps, so pauses are exact. */
+export interface FreeRun {
+  id: string
+  startedAt: number
+  /** Drawing time before the current stretch (pauses not included). */
+  carriedMs: number
+  /** When the current stretch started; none = paused. */
+  runningSince?: number
+  /** Last time the app saw it running, for a restart after the app was closed. */
+  lastSeen: number
+  skillId?: string
+  capture: boolean
 }
 
 export const DEFAULT_HOTKEYS: Hotkeys = {
@@ -355,18 +463,65 @@ export const DEFAULT_PLAN: SessionPlan = {
 
 export type StoreName = 'boards' | 'library' | 'sessions' | 'challenges' | 'presets' | 'skills' | 'settings'
 
+/* Pinterest sync */
+
+/** One page a sync read: the board page, a feed page, or the RSS feed. */
+export interface SyncPage {
+  kind: 'page' | 'feed' | 'rss'
+  /** HTTP status of the last try (0 = no answer). */
+  status: number
+  /** How many requests it took. */
+  tries: number
+  /** Picture pins on the page, and how many of them were new. */
+  pins: number
+  newPins: number
+  /** Items that are not pictures. */
+  skipped: number
+  /** Whether it pointed to a next page. */
+  next: boolean
+}
+
+/** What a sync did, page by page, so a short result can be explained. */
+export interface SyncDiagnostics {
+  pages: SyncPage[]
+  /** Pins seen again on a later page. */
+  duplicates: number
+  /** Only the RSS feed could be read (it holds the latest ~25 pins). */
+  rss: boolean
+  /**
+   * Why reading stopped. end: no next page. failed: a page couldn't be read
+   * after retries. short: the last page said "no more" before the board's
+   * own count was reached. rss: only the RSS feed worked.
+   */
+  stop: 'end' | 'failed' | 'repeated-bookmark' | 'limit' | 'rss' | 'short'
+}
+
+/** One pin of a board, downloaded (or already saved by an earlier sync). */
+export interface PinFile extends FoundFile {
+  pinId: string
+  /** The pin's page on Pinterest. */
+  sourceUrl: string
+}
+
 export interface PinterestImport {
   name: string
-  images: ImageRef[]
+  pins: PinFile[]
   report: {
     /** Pins with an image that the sync found. */
     found: number
-    /** Pin count the board reports; video-only pins make this a little higher. */
+    /** Pin count the board reports (0 when unknown); video-only pins make this a little higher. */
     expected: number
-    /** Pinterest stopped answering before the end; earlier images were kept. */
+    /** Not every page could be read (Pinterest stopped answering, or only the short RSS feed worked). */
     partial: boolean
     /** Pins whose image could not be downloaded. */
     failed: number
+    /** The board has more pins than one sync reads (MAX_PINS in src/main/pinterest.ts). */
+    limited: boolean
+    /** Items on the board that are not pictures (stories, ads, products). */
+    skipped: number
+    /** Images downloaded now (the rest were saved before). */
+    downloaded: number
+    diagnostics: SyncDiagnostics
   }
 }
 

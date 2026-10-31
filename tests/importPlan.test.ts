@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FolderTree } from '@shared/types'
-import { planImport, planTotals } from '../src/renderer/src/lib/importPlan'
+import { planImport, planTotals, skippedPaths } from '../src/renderer/src/lib/importPlan'
 
 const t = (path: string, direct: number, children: FolderTree[] = []): FolderTree => ({
   name: path.split('/').pop()!,
@@ -17,49 +17,44 @@ const t = (path: string, direct: number, children: FolderTree[] = []): FolderTre
 const tree = t('/Human Poses', 1, [t('/Human Poses/Portraits', 2), t('/Human Poses/Sports', 1, [t('/Human Poses/Sports/Basketball', 1)])])
 
 describe('adding a folder, keeping its structure', () => {
-  it('makes folders for folders with sub-folders and collections for the rest, all levels down', () => {
+  it('every disk folder becomes a folder, all levels down, with its images directly in it', () => {
     expect(planImport(tree, 'split')).toEqual({
-      type: 'folder',
       name: 'Human Poses',
+      images: 1,
       children: [
-        { type: 'collection', name: 'Human Poses (loose images)', dir: '/Human Poses', recursive: false, count: 1 },
-        { type: 'collection', name: 'Portraits', dir: '/Human Poses/Portraits', recursive: true, count: 2 },
-        {
-          type: 'folder',
-          name: 'Sports',
-          children: [
-            { type: 'collection', name: 'Sports (loose images)', dir: '/Human Poses/Sports', recursive: false, count: 1 },
-            { type: 'collection', name: 'Basketball', dir: '/Human Poses/Sports/Basketball', recursive: true, count: 1 }
-          ]
-        }
+        { name: 'Portraits', images: 2, children: [] },
+        { name: 'Sports', images: 1, children: [{ name: 'Basketball', images: 1, children: [] }] }
       ]
     })
-    expect(planTotals(planImport(tree, 'split'))).toEqual({ folders: 2, collections: 4, images: 5 })
+    expect(planTotals(planImport(tree, 'split'))).toEqual({ folders: 4, images: 5 })
   })
 
-  it('a folder without sub-folders is one collection', () => {
-    expect(planImport(t('/Feet', 4), 'split')).toEqual({ type: 'collection', name: 'Feet', dir: '/Feet', recursive: true, count: 4 })
+  it('a folder without sub-folders is just a folder of images', () => {
+    expect(planImport(t('/Feet', 4), 'split')).toEqual({ name: 'Feet', images: 4, children: [] })
   })
 
-  it('only the picked top-level sub-folders', () => {
+  it('only the picked top-level sub-folders; the others are remembered as left out', () => {
     const plan = planImport(tree, 'split', ['/Human Poses/Sports'])
-    expect(planTotals(plan)).toEqual({ folders: 2, collections: 3, images: 3 })
+    expect(planTotals(plan)).toEqual({ folders: 3, images: 3 })
+    expect(skippedPaths(tree, 'split', ['/Human Poses/Sports'])).toEqual(['/Human Poses/Portraits'])
   })
 
-  it('no loose-images collection when a folder has only sub-folders', () => {
-    const plan = planImport(t('/Refs', 0, [t('/Refs/A', 1), t('/Refs/B', 1)]), 'split')
-    expect(plan).toMatchObject({ type: 'folder', children: [{ name: 'A' }, { name: 'B' }] })
+  it('no made-up “loose images” layer when a folder holds images and sub-folders', () => {
+    const plan = planImport(tree, 'split')!
+    expect(plan.images).toBe(1)
+    expect(plan.children.map((c) => c.name)).toEqual(['Portraits', 'Sports'])
   })
 })
 
 describe('the other ways', () => {
-  it('one collection with everything, or only some sub-folders', () => {
-    expect(planImport(tree, 'one')).toEqual({ type: 'collection', name: 'Human Poses', dir: '/Human Poses', recursive: true, count: 5 })
-    expect(planImport(tree, 'one', ['/Human Poses/Portraits'])).toMatchObject({ count: 3, only: ['/Human Poses/Portraits'] })
+  it('one folder with everything, or only some sub-folders', () => {
+    expect(planImport(tree, 'one')).toEqual({ name: 'Human Poses', images: 5, children: [] })
+    expect(planImport(tree, 'one', ['/Human Poses/Portraits'])).toMatchObject({ images: 3 })
   })
 
   it('only the images directly in the folder', () => {
-    expect(planImport(tree, 'top')).toEqual({ type: 'collection', name: 'Human Poses', dir: '/Human Poses', recursive: false, count: 1 })
+    expect(planImport(tree, 'top')).toEqual({ name: 'Human Poses', images: 1, children: [] })
     expect(planImport(t('/Refs', 0, [t('/Refs/A', 1)]), 'top')).toBeNull()
+    expect(skippedPaths(tree, 'top', [])).toEqual([])
   })
 })

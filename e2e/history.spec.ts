@@ -2,6 +2,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { addFolder } from './lib'
 import { makeFixtures } from './make-fixtures'
 
 let app: ElectronApplication
@@ -31,7 +32,7 @@ test.afterAll(async () => {
 
 test('History finds a session by its note, filters it, and a heatmap day opens it', async () => {
   await page.getByRole('button', { name: 'Library' }).click()
-  await page.getByRole('button', { name: 'Add folder' }).click()
+  await addFolder(page)
   await page.getByRole('button', { name: 'Practice', exact: true }).click()
   await page.getByRole('radio', { name: 'Classic' }).click()
   await page.getByRole('spinbutton', { name: 'Custom seconds' }).fill('2')
@@ -55,7 +56,7 @@ test('History finds a session by its note, filters it, and a heatmap day opens i
   await page.getByRole('button', { name: 'Memory', exact: true }).click()
   await expect(page.getByText('No sessions match')).toBeVisible()
   await page.getByRole('button', { name: 'Memory', exact: true }).click()
-  // The collection's name is shown and searchable.
+  // The folder's name is shown and searchable.
   await page.getByRole('searchbox', { name: 'Search sessions' }).fill(refsDir.split(/[\\/]/).pop()!)
   await expect(page.getByText('“ribcage tilts the other way”')).toBeVisible()
   await page.getByRole('button', { name: 'Clear filters' }).click()

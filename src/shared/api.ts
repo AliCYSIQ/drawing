@@ -1,16 +1,18 @@
 import type {
   FloatState,
   FolderInfo,
+  FoundFile,
   HotkeyAction,
   Hotkeys,
-  ImageRef,
   PinterestImport,
   PinterestProgress,
   Region,
+  ScannedDir,
   StoreName,
   UpdateStatus
 } from './types'
 import type { BackupInfo, ResetPart } from './reset'
+import type { CaptureResult, CaptureTarget, WindowChoice } from './capture'
 
 /** What the preload script exposes as `window.api`. */
 export interface Api {
@@ -19,29 +21,32 @@ export interface Api {
 
   pickFolder(): Promise<string | null>
   pickImages(): Promise<string[]>
-  /** recursive (default true): include images in sub-folders. */
-  scanFolder(dir: string, recursive?: boolean): Promise<ImageRef[]>
+  /** A disk folder and its sub-folders with images, each with its own image files. */
+  scanTree(dir: string): Promise<ScannedDir[]>
   inspectFolder(dir: string): Promise<FolderInfo>
+  /** SHA-256 of each file (null where it can't be read). */
+  hashFiles(paths: string[]): Promise<(string | null)[]>
   /** Which of these files no longer exist. */
   missingFiles(paths: string[]): Promise<string[]>
   /** New paths for images after their folder moved (null where not found). */
   relinkFolder(oldDir: string, newDir: string, paths: string[]): Promise<(string | null)[]>
   /** Keep a smaller copy of a practiced reference for history; returns its path. */
   keepReference(imageId: string, path: string): Promise<string | null>
-  /** Copy images into the app's folder for a collection; ids stay the same. */
-  copyImages(boardId: string, refs: ImageRef[], baseDir?: string): Promise<ImageRef[]>
-  refsForFiles(paths: string[]): Promise<ImageRef[]>
-  /** Download an image URL into a collection board's folder. */
-  importUrl(boardId: string, url: string): Promise<ImageRef>
-  /** Save pasted or dropped image bytes into a collection board's folder. */
-  importBytes(boardId: string, name: string, bytes: Uint8Array): Promise<ImageRef>
-  /** `keep`: files other collections (copies) use, never deleted by the sync. */
-  importPinterest(boardId: string, url: string, keep?: string[]): Promise<PinterestImport>
+  /** Copy files into the app's own folder (the originals are only read); null where one can't be read. */
+  copyFiles(folderId: string, paths: string[], baseDir?: string): Promise<(FoundFile | null)[]>
+  /** Size and new-asset id of picked image files. */
+  filesInfo(paths: string[]): Promise<FoundFile[]>
+  /** Download an image URL into the app's folder. */
+  importUrl(folderId: string, url: string): Promise<FoundFile & { sourceUrl?: string }>
+  /** Save pasted or dropped image bytes into the app's folder. */
+  importBytes(folderId: string, name: string, bytes: Uint8Array): Promise<FoundFile>
+  /** `known`: pins already saved (pin id → file), never downloaded again. Deletes nothing. */
+  importPinterest(folderId: string, url: string, known?: Record<string, string>): Promise<PinterestImport>
   onPinterestProgress(cb: (p: PinterestProgress) => void): () => void
-  /** Delete the files the app stored for a board that was never saved (a failed import). */
-  removeBoardFiles(boardId: string): Promise<void>
-  /** Remove stored images no collection uses any more (copies share files); returns how many. */
-  cleanStoredFiles(liveIds: string[], inUse: string[]): Promise<number>
+  /** Delete what a failed first Pinterest import downloaded for a folder that was never saved. */
+  removeImportFiles(folderId: string): Promise<void>
+  /** Remove stored images nothing needs any more (only in the app's own folders); returns how many. */
+  cleanStoredFiles(inUse: string[]): Promise<number>
   /** Path of a dropped File, or '' when it isn't on disk. */
   pathForFile(file: File): string
   pickPhotos(): Promise<string[]>
@@ -60,7 +65,12 @@ export interface Api {
   onHotkey(cb: (action: 'pause' | 'next') => void): () => void
 
   pickRegion(): Promise<Region | null>
-  capture(region: Region, sessionId: string, index: number): Promise<string | null>
+  /** Capture the chosen window (or the older screen area); never falls back to the whole screen. */
+  capture(target: CaptureTarget, sessionId: string, index: number): Promise<CaptureResult>
+  /** Open windows to choose from (the app's own are left out; minimized ones aren't listed). */
+  listWindows(): Promise<WindowChoice[]>
+  /** A big picture of one window, for choosing the part to capture; null if it isn't open. */
+  windowPreview(id: string): Promise<string | null>
   setCaptureProtection(on: boolean): Promise<void>
 
   minimize(): void

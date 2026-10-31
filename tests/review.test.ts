@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PLAN, type PoseResult, type SessionRecord } from '@shared/types'
-import { filesInUse, removeSource, renameSource } from '../src/renderer/src/lib/review'
+import { filesInUse, overlayKey, removeSource, renameSource } from '../src/renderer/src/lib/review'
 
 const pose = (extra: Partial<PoseResult> = {}): PoseResult => ({
   imageId: 'a',
@@ -74,6 +74,22 @@ describe('removing a drawing image', () => {
     const { session: next } = removeSource(session(), 0, { kind: 'page', path: '/p/page1.jpg' })
     expect(filesInUse(next).has('/p/page1.jpg')).toBe(false)
     expect(filesInUse(next).has('/c/1.png')).toBe(true)
+  })
+})
+
+describe('marks in each layout', () => {
+  it('overlay marks are kept apart from side-by-side marks on the same drawing, and go and come back with it', () => {
+    const s = session()
+    s.poses[0].marks = { '/c/1.png': [line], [overlayKey('/c/1.png')]: [line, line] }
+    const { session: next, undo } = removeSource(s, 0, { kind: 'capture', path: '/c/1.png' })
+    expect(next.poses[0].marks).toEqual({})
+    const back = undo(next)
+    expect(back.poses[0].marks?.['/c/1.png']).toHaveLength(1)
+    expect(back.poses[0].marks?.[overlayKey('/c/1.png')]).toHaveLength(2)
+  })
+
+  it('a free drawing’s pictures count as files in use', () => {
+    expect(filesInUse({ ...session(), drawings: ['/c/f/001.png'] }).has('/c/f/001.png')).toBe(true)
   })
 })
 

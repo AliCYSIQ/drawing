@@ -3,14 +3,17 @@ import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DEFAULT_FLOAT, type FloatState, type Hotkeys, type ImageRef, type Region, type StoreName } from '@shared/types'
+import { DEFAULT_FLOAT, type FloatState, type Hotkeys, type Region, type StoreName } from '@shared/types'
 import type { ResetPart } from '@shared/reset'
-import { captureRegion, pickRegion } from './capture'
+import { capture, listWindows, pickRegion, windowPreview } from './capture'
+import type { CaptureTarget } from '@shared/capture'
 import { attachFloat, boundsBeforeFloat, getFloat, setFloat, setHotkeys, setSessionActive } from './float'
 import {
   cleanStoredFiles,
-  copyImages,
+  copyFiles,
   deleteSessionFile,
+  filesInfo,
+  hashFiles,
   importBytes,
   importPinterest,
   importUrl,
@@ -19,10 +22,9 @@ import {
   keepPhoto,
   keepReference,
   missingFiles,
-  refsForFiles,
   relinkFolder,
-  removeBoardFiles,
-  scanFolder,
+  removeImportFiles,
+  scanTree,
   thumbnail
 } from './library'
 import { log, logFile, recentLog } from './log'
@@ -172,23 +174,24 @@ function registerIpc(): void {
   })
   handle('library:keepPhoto', (sessionId: string, path: string) => keepPhoto(sessionId, path))
   handle('library:deleteSessionFile', (path: string) => deleteSessionFile(path))
-  handle('library:scanFolder', (dir: string, recursive?: boolean) => scanFolder(dir, recursive !== false))
+  handle('library:scanTree', (dir: string) => scanTree(dir))
   handle('library:inspectFolder', (dir: string) => inspectFolder(dir))
-  handle('library:copyImages', (boardId: string, refs: ImageRef[], baseDir?: string) => copyImages(boardId, refs, baseDir))
+  handle('library:copyFiles', (folderId: string, paths: string[], baseDir?: string) => copyFiles(folderId, paths, baseDir))
+  handle('library:hashFiles', (paths: string[]) => hashFiles(Array.isArray(paths) ? paths : []))
   handle('library:missingFiles', (paths: string[]) => missingFiles(paths))
   handle('library:relinkFolder', (oldDir: string, newDir: string, paths: string[]) => relinkFolder(oldDir, newDir, paths))
   handle('library:keepReference', (imageId: string, path: string) => keepReference(imageId, path).catch(() => null))
-  handle('library:refsForFiles', (paths: string[]) => refsForFiles(paths))
-  handle('library:importUrl', (boardId: string, url: string) => importUrl(boardId, url))
-  handle('library:importBytes', (boardId: string, name: string, bytes: Uint8Array) => importBytes(boardId, name, bytes))
-  handle('library:removeBoardFiles', (boardId: string) => removeBoardFiles(boardId))
-  handle('library:cleanStoredFiles', (liveIds: string[], inUse: string[]) => cleanStoredFiles(liveIds, inUse))
-  handle('library:importPinterest', (boardId: string, url: string, keep?: string[]) =>
+  handle('library:filesInfo', (paths: string[]) => filesInfo(paths))
+  handle('library:importUrl', (folderId: string, url: string) => importUrl(folderId, url))
+  handle('library:importBytes', (folderId: string, name: string, bytes: Uint8Array) => importBytes(folderId, name, bytes))
+  handle('library:removeImportFiles', (folderId: string) => removeImportFiles(folderId))
+  handle('library:cleanStoredFiles', (inUse: string[]) => cleanStoredFiles(Array.isArray(inUse) ? inUse : []))
+  handle('library:importPinterest', (folderId: string, url: string, known?: Record<string, string>) =>
     importPinterest(
-      boardId,
+      folderId,
       url,
-      (stage, done, total) => main?.webContents.send('pinterest:progress', { boardId, stage, done, total }),
-      Array.isArray(keep) ? keep : []
+      (stage, done, total) => main?.webContents.send('pinterest:progress', { boardId: folderId, stage, done, total }),
+      known && typeof known === 'object' ? known : {}
     )
   )
 
@@ -203,9 +206,9 @@ function registerIpc(): void {
   })
 
   handle('capture:pickRegion', () => pickRegion(main!, loadRenderer, preload))
-  handle('capture:grab', (region: Region, sessionId: string, index: number) =>
-    captureRegion(region, sessionId, index).catch(() => null)
-  )
+  handle('capture:grab', (target: CaptureTarget, sessionId: string, index: number) => capture(target, sessionId, index))
+  handle('capture:windows', () => listWindows())
+  handle('capture:preview', (id: string) => windowPreview(id))
   // Keeps the app's own window out of captures (Windows 10 2004+), so a
   // float window over the canvas doesn't end up in the drawing.
   handle('capture:protect', (on: boolean) => main?.setContentProtection(on))

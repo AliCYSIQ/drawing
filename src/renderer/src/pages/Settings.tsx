@@ -6,6 +6,7 @@ import { Backups, StartOver } from '../components/StartOver'
 import { UpdatesField } from '../components/UpdatesField'
 import { Button, Field, IconButton, PageHeader, Segmented, Toggle } from '../components/ui'
 import { findSkill, normalizeSkillName } from '../lib/skills'
+import { CaptureSetup } from '../components/Capture'
 import { useApp } from '../store'
 
 const HOTKEY_LABELS: Record<HotkeyAction, { name: string; when: string }> = {
@@ -49,13 +50,6 @@ export function Settings() {
     useApp.setState({ hotkeyStatus: await window.api.setHotkeys(hotkeys) })
   }
 
-  const pickRegion = async () => {
-    const region = await window.api.pickRegion()
-    if (region) {
-      updateSettings({ captureRegion: region })
-      notify('Canvas area saved.')
-    }
-  }
 
   return (
     <div className="page-narrow">
@@ -98,8 +92,8 @@ export function Settings() {
             className="h-9 rounded-md bg-surface px-2.5 text-ink outline-none ring-1 ring-line focus:ring-blue"
           >
             <option value="ask">Ask each time</option>
-            <option value="one">One collection with everything</option>
-            <option value="split">Keep the folder structure (folders and collections)</option>
+            <option value="split">Keep the folder structure</option>
+            <option value="one">One folder with everything</option>
             <option value="top">Only the images directly in the folder</option>
           </select>
         </Field>
@@ -132,20 +126,15 @@ export function Settings() {
           </div>
         </Field>
 
-        <Field label="Canvas area" hint="The part of the screen captured at the end of each pose, when capture is on.">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-ink">
-              {settings.captureRegion
-                ? `${Math.round(settings.captureRegion.width)} × ${Math.round(settings.captureRegion.height)} on screen`
-                : 'Not picked yet'}
-            </span>
-            <Button onClick={pickRegion}>{settings.captureRegion ? 'Pick again' : 'Pick canvas area'}</Button>
-            {settings.captureRegion && (
-              <Button tone="ghost" onClick={() => updateSettings({ captureRegion: undefined })}>
-                Clear
+        <Field label="Canvas capture" hint="The window captured at the end of each pose (and of a free drawing session), when capture is on.">
+          <CaptureSetup />
+          {(settings.captureWindow || settings.captureRegion) && (
+            <div className="mt-2">
+              <Button tone="ghost" onClick={() => updateSettings({ captureWindow: undefined, captureRegion: undefined })}>
+                Forget it
               </Button>
-            )}
-          </div>
+            </div>
+          )}
         </Field>
 
         <Field label="Hotkeys" hint="These work even while Clip Studio is in front. Click one, then press the new keys (with Ctrl, Alt or Shift).">

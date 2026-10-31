@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react'
 import { thumbUrl } from '@shared/api'
 import { DEFAULT_PLAN, type Challenge, type LadderKind, type Level } from '@shared/types'
-import { BoardPicker } from '../components/BoardPicker'
+import { FolderPicker } from '../components/FolderPicker'
 import { SkillPicker } from '../components/SkillPicker'
 import { ArrowLeft, Check, Lock, Plus, Trash } from '../components/Icons'
 import { Button, Empty, Field, IconButton, NumberField, PageHeader } from '../components/ui'
 import { currentLevel, isUnlocked, LADDERS, makeLadder, newLevel } from '../lib/challenges'
-import { resolveBoardIds } from '../lib/library'
-import { describeBlocks, estimateSeconds, formatDuration, poolFromBoards, slotsForLevel } from '../lib/schedule'
+import { childFolders, planFolderIds, poolFor } from '../lib/library'
+import { describeBlocks, estimateSeconds, formatDuration, slotsForLevel } from '../lib/schedule'
 import { availablePool, uid, useApp } from '../store'
 import { BlocksEditor } from './Practice'
 
@@ -18,23 +18,22 @@ export function Challenges({ challengeId }: { challengeId?: string }) {
 
 function ChallengeList() {
   const challenges = useApp((s) => s.challenges)
-  const boards = useApp((s) => s.boards)
+  const folders = useApp((s) => s.library.folders)
   const setChallenges = useApp((s) => s.setChallenges)
   const go = useApp((s) => s.go)
   const [making, setMaking] = useState<LadderKind | 'custom' | null>(null)
-  const [boardIds, setBoardIds] = useState<string[]>(() => boards.slice(0, 1).map((b) => b.id))
-  const [folderIds, setFolderIds] = useState<string[]>([])
+  const [folderIds, setFolderIds] = useState<string[]>(() => childFolders(folders, undefined).slice(0, 1).map((f) => f.id))
   const [skillId, setSkillId] = useState<string | undefined>()
   const skills = useApp((s) => s.skills)
 
   const create = () => {
-    if (!making || (!boardIds.length && !folderIds.length)) return
+    if (!making || !folderIds.length) return
     const id = uid()
     const made: Challenge =
       making === 'custom'
-        ? { id, name: 'My challenge', kind: 'custom', boardIds, levels: [newLevel(1)], completed: [], createdAt: Date.now() }
-        : makeLadder(id, making, boardIds, Date.now())
-    const ch: Challenge = folderIds.length ? { ...made, folderIds } : made
+        ? { id, name: 'My challenge', kind: 'custom', boardIds: [], levels: [newLevel(1)], completed: [], createdAt: Date.now() }
+        : makeLadder(id, making, [], Date.now())
+    const ch: Challenge = { ...made, folderIds }
     setChallenges((list) => [...list, skillId ? { ...ch, skillId } : ch])
     setMaking(null)
     go({ name: 'challenges', challengeId: id })
@@ -74,19 +73,12 @@ function ChallengeList() {
 
       {making && (
         <div className="mt-4 rounded-lg bg-surface p-4 ring-1 ring-line">
-          <div className="pb-3 font-semibold">Which boards should it use?</div>
-          <BoardPicker
-            value={boardIds}
-            folderIds={folderIds}
-            onChange={(b, f) => {
-              setBoardIds(b)
-              setFolderIds(f)
-            }}
-          />
+          <div className="pb-3 font-semibold">Which folders should it use?</div>
+          <FolderPicker value={folderIds} onChange={setFolderIds} />
           <div className="pb-2 pt-4 font-semibold">Skill it counts toward (optional)</div>
           <SkillPicker value={skillId} onChange={setSkillId} />
           <div className="mt-4 flex gap-2">
-            <Button tone="primary" disabled={!boardIds.length && !folderIds.length} onClick={create}>
+            <Button tone="primary" disabled={!folderIds.length} onClick={create}>
               Create challenge
             </Button>
             <Button tone="ghost" onClick={() => setMaking(null)}>
@@ -144,7 +136,7 @@ function LevelDots({ challenge }: { challenge: Challenge }) {
 }
 
 function ChallengeView({ challenge }: { challenge: Challenge }) {
-  const boards = useApp((s) => s.boards)
+  const library = useApp((s) => s.library)
   const sessions = useApp((s) => s.sessions)
   const settings = useApp((s) => s.settings)
   const setChallenges = useApp((s) => s.setChallenges)
@@ -160,12 +152,7 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
 
   const level = challenge.levels[Math.min(selected, challenge.levels.length - 1)]
   const missing = useApp((s) => s.missing)
-  const folders = useApp((s) => s.library.folders)
-  const boardIds = useMemo(
-    () => resolveBoardIds({ boards, folders }, challenge.boardIds, challenge.folderIds),
-    [boards, folders, challenge.boardIds, challenge.folderIds]
-  )
-  const pool = useMemo(() => availablePool({ boards, missing }, poolFromBoards(boards, boardIds)), [boards, missing, boardIds])
+  const pool = useMemo(() => availablePool({ missing }, poolFor(library, library.assets, planFolderIds(challenge))), [library, missing, challenge])
   const unlocked = isUnlocked(challenge, selected)
   const attempts = sessions
     .filter((s) => s.challenge?.challengeId === challenge.id && s.challenge.level === selected)
@@ -178,8 +165,8 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
       plan: {
         ...DEFAULT_PLAN,
         ...settings.lastPlan,
-        boardIds: challenge.boardIds,
-        folderIds: challenge.folderIds,
+        boardIds: [],
+        folderIds: planFolderIds(challenge),
         mode: 'class',
         blocks: level.blocks,
         shuffle: true,
@@ -207,7 +194,7 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
           className="-ml-1 min-w-0 flex-1 rounded-md bg-transparent px-1 text-[22px] font-semibold tracking-[-0.01em] outline-none hover:bg-surface focus:bg-surface focus:ring-1 focus:ring-blue"
         />
         <Button tone="ghost" onClick={() => setEditing((v) => !v)}>
-          {editing ? 'Done editing' : 'Edit levels, boards and skill'}
+          {editing ? 'Done editing' : 'Edit levels, folders and skill'}
         </Button>
         {confirmDelete ? (
           <>
@@ -250,7 +237,7 @@ function ChallengeView({ challenge }: { challenge: Challenge }) {
                 {challenge.completed.includes(selected) ? 'Play again' : 'Start level'}
               </Button>
               {!unlocked && <span className="text-muted">Finish level {selected} to open this one.</span>}
-              {!pool.length && <span className="text-muted">This challenge's boards have no images. Edit it to pick boards.</span>}
+              {!pool.length && <span className="text-muted">This challenge's folders have no images. Edit it to pick folders.</span>}
             </div>
 
             <h3 className="pb-3 pt-10 font-semibold">Your tries at this level</h3>
@@ -349,8 +336,8 @@ function Editor({ challenge, update }: { challenge: Challenge; update: (p: Parti
 
   return (
     <div className="max-w-3xl">
-      <Field label="Boards">
-        <BoardPicker value={challenge.boardIds} folderIds={challenge.folderIds} onChange={(boardIds, folderIds) => update({ boardIds, folderIds })} />
+      <Field label="Folders">
+        <FolderPicker value={planFolderIds(challenge)} onChange={(folderIds) => update({ boardIds: [], folderIds })} />
       </Field>
       <Field label="Skill" hint="Every level's session counts toward this skill in Stats.">
         <SkillPicker value={challenge.skillId} onChange={(skillId) => update({ skillId })} />

@@ -5,12 +5,12 @@ import {
   DEFAULT_PLAN,
   DEFAULT_SETTINGS,
   EMPTY_LIBRARY,
-  type Board,
   type Challenge,
   type FloatState,
+  type FreeRun,
   type HotkeyAction,
   type ImageRef,
-  type LibraryMeta,
+  type LibraryData,
   type PoseResult,
   type Preset,
   type SessionPlan,
@@ -20,16 +20,18 @@ import {
   type StoreName,
   type UpdateStatus
 } from '@shared/types'
+import type { CaptureResult, CaptureTarget } from '@shared/capture'
 import { completeLevel } from './lib/challenges'
-import { resolveBoardIds, type Item, type Lib } from './lib/library'
-import { createMemory, type MemoryState } from './lib/memoryEngine'
+import { freeBeat, freePause, freeRecord, freeRestore, freeStart, freeToggle } from './lib/freeEngine'
+import { planFolderIds, tidyAssets, type Item, type Lib } from './lib/library'
+import { createMemory, memoryStop, type MemoryState } from './lib/memoryEngine'
 import { findSkill, normalizeSkillName, withoutSkill } from './lib/skills'
-import { activeMs, createEngine, type EngineState, type Slot } from './lib/sessionEngine'
+import { activeMs, createEngine, stop, type EngineState, type Slot } from './lib/sessionEngine'
 
 export type View =
   | { name: 'practice' }
-  | { name: 'library'; boardId?: string; folderId?: string }
-  | { name: 'viewer'; boardId: string; index: number }
+  | { name: 'library'; folderId?: string }
+  | { name: 'viewer'; folderId?: string; entryId: string }
   | { name: 'challenges'; challengeId?: string }
   | { name: 'stats' }
   | { name: 'history'; day?: string }
@@ -60,12 +62,18 @@ export interface Toast {
   action?: { label: string; run: () => void }
 }
 
+/** A library state Undo or Redo goes back to. */
+interface LibrarySnapshot {
+  label: string
+  folders: LibraryData['folders']
+  images: LibraryData['images']
+}
+
 interface State {
   loaded: boolean
   view: View
-  boards: Board[]
-  /** Folders and favorite images. */
-  library: LibraryMeta
+  /** Folders, images, assets and favorite images. */
+  library: LibraryData
   sessions: SessionRecord[]
   challenges: Challenge[]
   presets: Preset[]
@@ -75,31 +83,34 @@ interface State {
   float: FloatState
   hotkeyStatus: Record<HotkeyAction, boolean>
   run: Run | null
+  /** A free drawing session that is going (also saved in settings, for a restart). */
+  free: FreeRun | null
   toast: Toast | null
-  /** Image ids per collection whose file can't be found (checked, not saved). */
-  missing: Record<string, string[]>
+  /** Asset ids whose file can't be found (checked, not saved). */
+  missing: string[]
   update: UpdateStatus
   /** Library changes that Ctrl+Z (or a toast's Undo) can take back, newest last. */
-  libraryUndo: { label: string; boards: Board[]; folders: LibraryMeta['folders'] }[]
-  /** Cut or copied library items, waiting for Paste. */
-  clipboard: { op: 'cut' | 'copy'; items: Item[] } | null
-  setClipboard(c: State['clipboard']): void
-  /**
-   * Change collections and folders together, with Undo. `deletedBoards`:
-   * collections whose stored image files go at the next start.
-   */
-  changeLibrary(label: string, fn: (lib: Lib) => Lib & { deletedBoards?: string[] }, toast?: string): void
+  libraryUndo: LibrarySnapshot[]
+  /** Changes Undo took back, for Redo (Ctrl+Y). A new change clears them. */
+  libraryRedo: LibrarySnapshot[]
+  /** Cut or copied library items, waiting for Paste. `at`: when, to tell it apart from the system clipboard. */
+  clipboard: { op: 'cut' | 'copy'; items: Item[]; at: number } | null
+  setClipboard(c: { op: 'cut' | 'copy'; items: Item[] } | null): void
+  /** Change the library with Undo. The function gets the whole library and returns it changed. */
+  changeLibrary(label: string, fn: (data: LibraryData) => LibraryData | (Lib & Partial<LibraryData>), toast?: string): void
   undoLibrary(): void
+  redoLibrary(): void
   checkMissing(): Promise<void>
+  /** Work out the SHA-256 of images that don't have one yet, a few at a time. */
+  hashPending(): Promise<void>
 
   init(): Promise<void>
   go(view: View): void
   /** A short message; with `action`, it has a button (like Undo) and stays a little longer. */
   notify(text: string, action?: Toast['action']): void
   dismissToast(): void
-  setBoards(fn: (b: Board[]) => Board[]): void
-  setLibrary(fn: (l: LibraryMeta) => LibraryMeta): void
-  updateBoard(id: string, patch: Partial<Board>): void
+  /** A library change without Undo (favorites, hashes). */
+  setLibrary(fn: (l: LibraryData) => LibraryData): void
   setChallenges(fn: (c: Challenge[]) => Challenge[]): void
   setPresets(fn: (p: Preset[]) => Preset[]): void
   setSkills(fn: (s: Skill[]) => Skill[]): void
@@ -126,7 +137,12 @@ interface State {
   addResult(result: PoseResult): number
   updateResult(index: number, patch: Partial<PoseResult>): void
   /** Save the session (unless almost nothing was drawn) and go to review or back. */
-  finishRun(finished: boolean): void
+  finishRun(finished: boolean, opts?: { quiet?: boolean }): void
+
+  startFree(opts: { skillId?: string; capture: boolean }): void
+  toggleFree(): void
+  /** End free drawing: save it (with the pictures kept from the end capture) and show it. */
+  endFree(drawings?: string[]): void
 }
 
 export const uid = (): string => crypto.randomUUID()
@@ -136,7 +152,6 @@ let initStarted = false
 export const useApp = create<State>((set, get) => ({
   loaded: false,
   view: { name: 'practice' },
-  boards: [],
   library: EMPTY_LIBRARY,
   sessions: [],
   challenges: [],
@@ -146,9 +161,11 @@ export const useApp = create<State>((set, get) => ({
   float: DEFAULT_FLOAT,
   hotkeyStatus: { clickThrough: true, float: true, pause: true, next: true },
   run: null,
-  missing: {},
+  free: null,
+  missing: [],
   update: { state: 'idle' },
   libraryUndo: [],
+  libraryRedo: [],
   clipboard: null,
   toast: null,
 
@@ -156,9 +173,8 @@ export const useApp = create<State>((set, get) => ({
     if (initStarted) return
     initStarted = true
     const api = window.api
-    const [boards, library, sessions, challenges, presets, skills, saved] = await Promise.all([
-      api.load<Board[]>('boards'),
-      api.load<LibraryMeta>('library'),
+    const [library, sessions, challenges, presets, skills, saved] = await Promise.all([
+      api.load<LibraryData>('library'),
       api.load<SessionRecord[]>('sessions'),
       api.load<Challenge[]>('challenges'),
       api.load<Preset[]>('presets'),
@@ -174,17 +190,41 @@ export const useApp = create<State>((set, get) => ({
       hotkeys: { ...DEFAULT_HOTKEYS, ...saved?.hotkeys },
       float: { ...DEFAULT_FLOAT, ...saved?.float, on: false, clickThrough: false }
     }
+    let lib: LibraryData = {
+      ...EMPTY_LIBRARY,
+      ...library,
+      folders: library?.folders ?? [],
+      images: library?.images ?? [],
+      assets: library?.assets ?? [],
+      favoriteImages: library?.favoriteImages ?? []
+    }
+    // Stored images nothing needs any more go now, after a restart, so Undo
+    // worked until then. Only when the library loaded, so a damaged library
+    // file never deletes anything. (Every practiced reference also has its
+    // own kept copy, so history never depends on these files.)
+    if (library?.format === 4) {
+      const tidy = tidyAssets(lib, sessions ?? [])
+      lib = tidy.data
+      void api.cleanStoredFiles(tidy.inUse)
+    }
+    // A free drawing session that was going when the app closed comes back, paused.
+    const free = settings.freeRun ? freeRestore(settings.freeRun) : null
     set({
-      boards: (boards ?? []).map((b) => ({ ...b, tags: b.tags ?? [] })),
-      library: { ...EMPTY_LIBRARY, ...library },
+      library: lib,
       sessions: sessions ?? [],
       challenges: challenges ?? [],
       presets: presets ?? [],
       skills: skills ?? [],
-      settings,
+      settings: free ? { ...settings, freeRun: free } : settings,
       float: settings.float,
+      free,
+      ...(free ? { view: { name: 'session' as const } } : {}),
       loaded: true
     })
+    if (free) {
+      void api.setSessionActive(true)
+      get().notify('Your free drawing session is back, paused. Press Resume to go on.')
+    }
     api.onFloatChanged((float) => {
       set({ float })
       const { on, clickThrough, ...keep } = float
@@ -195,34 +235,53 @@ export const useApp = create<State>((set, get) => ({
         get().updateSettings({ float: { ...prev, ...keep } })
       }
     })
-    // Stored images of collections deleted last time (kept until now so Undo
-    // worked). Copies share files, so only files no collection uses go. Only
-    // when the collections list loaded, so a damaged file never deletes anything.
-    if (boards && library?.pendingDelete?.length) {
-      void api.cleanStoredFiles(
-        boards.map((b) => b.id),
-        boards.flatMap((b) => b.images.map((i) => i.path))
-      )
-      set({ library: { ...get().library, pendingDelete: [] } })
-    }
-    api.onFlush(() => void flushSaves().then(() => api.flushed()))
+    api.onFlush(() => {
+      // Closing in the middle of a session keeps what was drawn, as "stopped early".
+      if (get().run) {
+        stopRunClock()
+        get().finishRun(false, { quiet: true })
+      }
+      const f = get().free
+      if (f && !freePausedNow(f)) get().updateSettings({ freeRun: freeBeat(f, Date.now()) })
+      void flushSaves().then(() => api.flushed())
+    })
     api.onUpdateStatus((update) => set({ update }))
     set({ update: await api.updateStatus() })
     set({ hotkeyStatus: await api.setHotkeys(settings.hotkeys) })
-    void get().checkMissing()
+    void get().checkMissing().then(() => get().hashPending())
     // A little after start, so the first screen isn't slowed down.
     if (settings.autoUpdate !== false) setTimeout(() => void api.checkUpdates(), 10_000)
   },
 
   async checkMissing() {
-    const boards = get().boards
-    const gone = new Set(await window.api.missingFiles(boards.flatMap((b) => b.images.map((i) => i.path))))
-    const missing: Record<string, string[]> = {}
-    for (const b of boards) {
-      const ids = b.images.filter((i) => gone.has(i.path)).map((i) => i.id)
-      if (ids.length) missing[b.id] = ids
+    const { assets, images } = get().library
+    const used = new Set(images.map((i) => i.assetId))
+    const list = assets.filter((a) => used.has(a.id))
+    const gone = new Set(await window.api.missingFiles(list.map((a) => a.path)))
+    set({ missing: list.filter((a) => gone.has(a.path)).map((a) => a.id) })
+  },
+
+  async hashPending() {
+    if (hashing) return
+    hashing = true
+    try {
+      for (;;) {
+        // Never while drawing: the disk and the processor are yours then.
+        if (get().run || get().free) return
+        const { library, missing } = get()
+        const gone = new Set(missing)
+        const used = new Set(library.images.map((i) => i.assetId))
+        const todo = library.assets.filter((a) => !a.sha256 && used.has(a.id) && !gone.has(a.id) && !failedHash.has(a.id)).slice(0, 16)
+        if (!todo.length) return
+        const hashes = await window.api.hashFiles(todo.map((a) => a.path))
+        const found = new Map<string, string>()
+        todo.forEach((a, i) => (hashes[i] ? found.set(a.id, hashes[i]!) : failedHash.add(a.id)))
+        if (found.size) get().setLibrary((l) => ({ ...l, assets: l.assets.map((a) => (found.has(a.id) ? { ...a, sha256: found.get(a.id) } : a)) }))
+        await new Promise((r) => setTimeout(r, 50))
+      }
+    } finally {
+      hashing = false
     }
-    set({ missing })
   },
 
   go(view) {
@@ -245,55 +304,49 @@ export const useApp = create<State>((set, get) => ({
   },
 
   setClipboard(clipboard) {
-    set({ clipboard })
+    set({ clipboard: clipboard ? { ...clipboard, at: Date.now() } : null })
   },
 
   changeLibrary(label, fn, toast) {
-    const { boards, library, libraryUndo } = get()
-    const out = fn({ boards, folders: library.folders })
-    if (out.boards === boards && out.folders === library.folders) return
-    const gone = out.deletedBoards ?? []
+    const { library, libraryUndo } = get()
+    const out = fn(library)
+    if (out.folders === library.folders && out.images === library.images && (out.assets ?? library.assets) === library.assets) return
     set({
-      boards: out.boards,
-      library: {
-        ...library,
-        folders: out.folders,
-        ...(gone.length ? { pendingDelete: [...new Set([...(library.pendingDelete ?? []), ...gone])] } : {})
-      },
-      libraryUndo: [...libraryUndo.slice(-19), { label, boards, folders: library.folders }]
+      library: { ...library, ...out },
+      libraryUndo: [...libraryUndo.slice(-29), { label, folders: library.folders, images: library.images }],
+      libraryRedo: []
     })
     if (toast) get().notify(toast, { label: 'Undo', run: () => get().undoLibrary() })
   },
 
   undoLibrary() {
-    const { libraryUndo, boards, library } = get()
+    const { libraryUndo, libraryRedo, library } = get()
     const last = libraryUndo[libraryUndo.length - 1]
     if (!last) return
-    // Collections the undo removes (copies) have their stored files cleaned up later.
-    const kept = new Set(last.boards.map((b) => b.id))
-    const dropped = boards.filter((b) => !kept.has(b.id)).map((b) => b.id)
+    // Assets stay: an image the undo takes away may come back with Redo, and
+    // ones nothing uses are tidied at the next start.
     set({
-      boards: last.boards,
-      library: {
-        ...library,
-        folders: last.folders,
-        ...(dropped.length ? { pendingDelete: [...new Set([...(library.pendingDelete ?? []), ...dropped])] } : {})
-      },
-      libraryUndo: libraryUndo.slice(0, -1)
+      library: { ...library, folders: last.folders, images: last.images },
+      libraryUndo: libraryUndo.slice(0, -1),
+      libraryRedo: [...libraryRedo, { label: last.label, folders: library.folders, images: library.images }]
     })
     get().notify(`Undone: ${last.label}.`)
   },
 
-  setBoards(fn) {
-    set({ boards: fn(get().boards) })
+  redoLibrary() {
+    const { libraryUndo, libraryRedo, library } = get()
+    const next = libraryRedo[libraryRedo.length - 1]
+    if (!next) return
+    set({
+      library: { ...library, folders: next.folders, images: next.images },
+      libraryRedo: libraryRedo.slice(0, -1),
+      libraryUndo: [...libraryUndo, { label: next.label, folders: library.folders, images: library.images }]
+    })
+    get().notify(`Redone: ${next.label}.`)
   },
 
   setLibrary(fn) {
     set({ library: fn(get().library) })
-  },
-
-  updateBoard(id, patch) {
-    set({ boards: get().boards.map((b) => (b.id === id ? { ...b, ...patch } : b)) })
   },
 
   setChallenges(fn) {
@@ -386,7 +439,8 @@ export const useApp = create<State>((set, get) => ({
       view: { name: 'session' }
     })
     void window.api.setSessionActive(true)
-    if (plan.capture) void window.api.setCaptureProtection(true)
+    // A fixed screen area would catch the app's own window; a chosen window can't.
+    if (plan.capture && captureTargetOf(get().settings)?.kind === 'screen') void window.api.setCaptureProtection(true)
   },
 
   setEngine(engine) {
@@ -420,7 +474,7 @@ export const useApp = create<State>((set, get) => ({
     set({ run: { ...run, results: run.results.map((r, i) => (i === index ? { ...r, ...patch } : r)) } })
   },
 
-  finishRun(finished) {
+  finishRun(finished, opts = {}) {
     const run = get().run
     if (!run) return
     void window.api.setSessionActive(false)
@@ -428,7 +482,7 @@ export const useApp = create<State>((set, get) => ({
     const drawn = run.memory ? run.results.reduce((a, r) => a + r.spentMs, 0) : activeMs(run.engine)
     if (drawn < 3000) {
       set({ run: null, view: run.returnTo })
-      get().notify('Stopped before drawing anything, so nothing was saved.')
+      if (!opts.quiet) get().notify('Stopped before drawing anything, so nothing was saved.')
       return
     }
     const timed: PoseResult[] = run.slots.map((slot, i) => ({
@@ -442,10 +496,10 @@ export const useApp = create<State>((set, get) => ({
       redo: false
     }))
     const poses = run.memory ? run.results : timed
-    // Collection names now, so history can still find the session after renames.
-    const { boards, library } = get()
-    const boardNames = resolveBoardIds({ boards, folders: library.folders }, run.plan.boardIds, run.plan.folderIds)
-      .map((id) => boards.find((b) => b.id === id)?.name)
+    // Folder names now, so history can still find the session after renames.
+    const { library } = get()
+    const boardNames = planFolderIds(run.plan)
+      .map((id) => library.folders.find((f) => f.id === id)?.name)
       .filter((n): n is string => !!n)
     const record: SessionRecord = {
       id: run.id,
@@ -461,6 +515,7 @@ export const useApp = create<State>((set, get) => ({
       ...(run.challenge ? { challenge: run.challenge } : {}),
       ...(run.redoOf ? { redoOf: run.redoOf } : {})
     }
+    // Only a challenge level played to its end counts as done.
     let challenges = get().challenges
     if (run.challenge && finished) {
       const { challengeId, level } = run.challenge
@@ -471,15 +526,116 @@ export const useApp = create<State>((set, get) => ({
       sessions: [...get().sessions, record],
       challenges,
       settings: run.challenge || run.redoOf ? get().settings : { ...get().settings, lastPlan: run.plan },
-      view: run.plan.review ? { name: 'review', sessionId: record.id } : run.returnTo
+      view: run.plan.review && !opts.quiet ? { name: 'review', sessionId: record.id } : run.returnTo
     })
     // Keep a copy of each practiced reference so this session's history and
     // review still show it if the original is later moved or deleted.
     void keepReferences(record)
+    void get().hashPending()
+    if (opts.quiet) return
     if (run.challenge && finished) get().notify(`Level ${run.challenge.level + 1} done. The next level is open.`)
-    else if (!run.plan.review) get().notify('Session saved.')
+    else if (run.challenge) get().notify('Session saved. It was stopped early, so the level stays open until you finish it.')
+    else if (!run.plan.review) get().notify(finished ? 'Session saved.' : 'Session saved. It was stopped early; the time you drew counts.')
+  },
+
+  startFree({ skillId, capture }) {
+    const free = freeStart(uid(), Date.now(), { skillId, capture })
+    set({ free, view: { name: 'session' }, settings: { ...get().settings, freeRun: free, freeCapture: capture } })
+    void window.api.setSessionActive(true)
+  },
+
+  toggleFree() {
+    const f = get().free
+    if (!f) return
+    const free = freeToggle(f, Date.now())
+    set({ free, settings: { ...get().settings, freeRun: free } })
+  },
+
+  endFree(drawings = []) {
+    const f = get().free
+    if (!f) return
+    const now = Date.now()
+    const paused = freePause(f, now)
+    void window.api.setSessionActive(false)
+    const { freeRun, ...settings } = get().settings
+    void freeRun
+    if (paused.carriedMs < 3000) {
+      set({ free: null, settings, view: { name: 'practice' } })
+      get().notify('Stopped before drawing anything, so nothing was saved.')
+      for (const d of drawings) void window.api.deleteSessionFile(d)
+      return
+    }
+    const record = freeRecord(paused, now, { drawings })
+    set({ free: null, settings, sessions: [...get().sessions, record], view: { name: 'review', sessionId: record.id } })
+    get().notify(f.capture && !drawings.length ? 'Session saved, without a picture of the canvas.' : 'Session saved.')
+    void get().hashPending()
   }
 }))
+
+/** What canvas captures take: the chosen window, else the older fixed screen area, else nothing. */
+export function captureTargetOf(settings: Settings): CaptureTarget | null {
+  if (settings.captureWindow) return { kind: 'window', window: settings.captureWindow }
+  if (settings.captureRegion) return { kind: 'screen', region: settings.captureRegion }
+  return null
+}
+
+/**
+ * Capture the canvas now. A window found under a new source id (its app was
+ * restarted) is remembered under it, so the next capture finds it at once.
+ */
+export async function captureNow(sessionId: string, index: number): Promise<CaptureResult> {
+  const { settings, updateSettings } = useApp.getState()
+  const target = captureTargetOf(settings)
+  if (!target) return { error: 'No window is chosen for captures. Choose one in Settings or on Practice.' }
+  const protect = target.kind === 'screen'
+  if (protect) await window.api.setCaptureProtection(true)
+  const r = await window.api.capture(target, sessionId, index).catch((err: Error) => ({ error: err.message }) as CaptureResult)
+  if (protect && !useApp.getState().run) await window.api.setCaptureProtection(false)
+  const w = useApp.getState().settings.captureWindow
+  if (target.kind === 'window' && w && r.hint && (r.hint !== w.hint || (r.title && r.title !== w.title))) {
+    updateSettings({ captureWindow: { ...w, hint: r.hint, ...(r.title ? { title: r.title } : {}) } })
+  }
+  return r
+}
+
+let hashing = false
+
+/** Stop the running pose's clock, so the time drawn in it counts (the app is closing). */
+function stopRunClock(): void {
+  const { run, setEngine, setMemory, addResult } = useApp.getState()
+  if (!run) return
+  const now = Date.now()
+  if (!run.memory) return setEngine(stop(run.engine, now).state)
+  const step = memoryStop(run.memory, now)
+  for (const ev of step.events) {
+    if (ev.type !== 'drawEnd') continue
+    const slot = run.memory.refs[ev.index]
+    addResult({
+      imageId: slot.imageId,
+      imagePath: slot.imagePath,
+      plannedSeconds: run.memory.drawSeconds,
+      spentMs: Math.round(ev.drawMs),
+      studyMs: Math.round(ev.studyMs),
+      attempt: ev.attempt,
+      skipped: false,
+      mistakes: [],
+      redo: false
+    })
+  }
+  setMemory(step.state)
+}
+/** Files that couldn't be read for a hash this time; tried again after a restart. */
+const failedHash = new Set<string>()
+
+function freePausedNow(f: FreeRun): boolean {
+  return f.runningSince === undefined
+}
+
+// A running free session is saved every 15 seconds, so a crash or restart loses little.
+setInterval(() => {
+  const { free, settings, updateSettings } = useApp.getState()
+  if (free && !freePausedNow(free) && settings.freeRun) updateSettings({ freeRun: freeBeat(free, Date.now()) })
+}, 15_000)
 
 /** Pages that can show in float mode; every other page needs the normal window. */
 const FLOAT_VIEWS: View['name'][] = ['session', 'viewer']
@@ -506,13 +662,14 @@ async function keepReferences(record: SessionRecord): Promise<void> {
   }))
 }
 
-/** All images of these collections that can still be found (missing ones are skipped in sessions). */
-export function availablePool(state: Pick<State, 'boards' | 'missing'>, pool: ImageRef[]): ImageRef[] {
-  const gone = new Set(Object.values(state.missing).flat())
-  return gone.size ? pool.filter((i) => !gone.has(i.id)) : pool
+/** The images of a pool whose file can still be found (missing ones are skipped in sessions). */
+export function availablePool(state: Pick<State, 'missing'>, pool: ImageRef[]): ImageRef[] {
+  if (!state.missing.length) return pool
+  const gone = new Set(state.missing)
+  return pool.filter((i) => !gone.has(i.id))
 }
 
-// Save each collection shortly after it changes.
+// Save each part shortly after it changes.
 const timers = new Map<StoreName, ReturnType<typeof setTimeout>>()
 const waiting = new Map<StoreName, unknown>()
 function persist(name: StoreName, data: unknown): void {
@@ -542,7 +699,6 @@ export async function flushSaves(): Promise<void> {
 
 useApp.subscribe((state, prev) => {
   if (!state.loaded || !prev.loaded) return
-  if (state.boards !== prev.boards) persist('boards', state.boards)
   if (state.library !== prev.library) persist('library', state.library)
   if (state.sessions !== prev.sessions) persist('sessions', state.sessions)
   if (state.challenges !== prev.challenges) persist('challenges', state.challenges)
@@ -553,4 +709,12 @@ useApp.subscribe((state, prev) => {
 
 export function initialPlan(settings: Settings): SessionPlan {
   return { ...DEFAULT_PLAN, ...settings.lastPlan }
+}
+
+let lastCaptureError = ''
+/** A capture during a session failed: say why once, without stopping the session. */
+export function captureFailed(error = 'The canvas could not be captured.'): void {
+  if (error === lastCaptureError && useApp.getState().toast?.text.includes(error)) return
+  lastCaptureError = error
+  useApp.getState().notify(`Canvas capture: ${error} The session goes on; you can add a photo in review.`)
 }

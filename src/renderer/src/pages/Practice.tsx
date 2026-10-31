@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { DEFAULT_PLAN, type Block, type SessionMode, type SessionPlan } from '@shared/types'
-import { BoardPicker } from '../components/BoardPicker'
+import { FolderPicker } from '../components/FolderPicker'
 import { SkillPicker } from '../components/SkillPicker'
 import { Plus, Trash } from '../components/Icons'
 import { Button, Field, IconButton, NumberField, Segmented, Toggle } from '../components/ui'
@@ -10,18 +10,46 @@ import {
   estimateSeconds,
   formatDuration,
   planBlocks,
-  poolFromBoards,
   recentlySeen,
   slotsForPlan
 } from '../lib/schedule'
-import { resolveBoardIds } from '../lib/library'
+import { assetMap, childFolders, planFolderIds, poolFor } from '../lib/library'
 import { currentStreak, dayKey, minutesByDay, recentMistakes } from '../lib/stats'
-import { availablePool, initialPlan, uid, useApp } from '../store'
+import { CaptureSetup } from '../components/Capture'
+import { availablePool, captureTargetOf, initialPlan, uid, useApp } from '../store'
 
 const TIMES = [30, 60, 120, 300, 600]
 
+type Kind = 'references' | 'free'
+/** Which tab Practice showed last, while the app is open. */
+let lastKind: Kind = 'references'
+
 export function Practice() {
-  const boards = useApp((s) => s.boards)
+  const [kind, setKindState] = useState<Kind>(lastKind)
+  const setKind = (k: Kind) => {
+    lastKind = k
+    setKindState(k)
+  }
+  return (
+    <div className="page-form">
+      <div className="mb-5">
+        <Segmented<Kind>
+          label="What kind of session"
+          value={kind}
+          onChange={setKind}
+          options={[
+            { value: 'references', label: 'From references' },
+            { value: 'free', label: 'Free drawing' }
+          ]}
+        />
+      </div>
+      {kind === 'free' ? <FreeSetup /> : <ReferenceSetup />}
+    </div>
+  )
+}
+
+function ReferenceSetup() {
+  const library = useApp((s) => s.library)
   const sessions = useApp((s) => s.sessions)
   const settings = useApp((s) => s.settings)
   const presets = useApp((s) => s.presets)
@@ -32,23 +60,24 @@ export function Practice() {
   const startRun = useApp((s) => s.startRun)
   const notify = useApp((s) => s.notify)
 
-  const folders = useApp((s) => s.library.folders)
+  const folders = library.folders
   const [plan, setPlanState] = useState<SessionPlan>(() => {
     const p = initialPlan(settings)
-    const known = p.boardIds.filter((id) => boards.some((b) => b.id === id))
-    const knownFolders = (p.folderIds ?? []).filter((id) => folders.some((f) => f.id === id))
-    return { ...p, boardIds: known.length || knownFolders.length ? known : boards.slice(0, 1).map((b) => b.id), folderIds: knownFolders }
+    // Plans from before v0.3 picked collections; they are folders now, with the same ids.
+    const known = planFolderIds(p).filter((id) => folders.some((f) => f.id === id))
+    const mode = p.mode === 'free' ? 'classic' : p.mode
+    return { ...p, mode, boardIds: [], folderIds: known.length ? known : childFolders(folders, undefined).slice(0, 1).map((f) => f.id) }
   })
   const [presetName, setPresetName] = useState<string | null>(null)
   const setPlan = (patch: Partial<SessionPlan>) => setPlanState((p) => ({ ...p, ...patch }))
 
   const missing = useApp((s) => s.missing)
-  const favoriteImages = useApp((s) => s.library.favoriteImages)
-  // Picked collections plus everything in picked folders.
-  const boardIds = useMemo(() => resolveBoardIds({ boards, folders }, plan.boardIds, plan.folderIds), [boards, folders, plan.boardIds, plan.folderIds])
-  const allImages = useMemo(() => poolFromBoards(boards, boardIds), [boards, boardIds])
+  const favoriteImages = library.favoriteImages
+  const assets = useMemo(() => assetMap(library.assets), [library.assets])
+  // Every image in the picked folders, sub-folders included, each once.
+  const allImages = useMemo(() => poolFor(library, assets, plan.folderIds ?? []), [library, assets, plan.folderIds])
   // Images whose file is gone are skipped.
-  const available = useMemo(() => availablePool({ boards, missing }, allImages), [boards, missing, allImages])
+  const available = useMemo(() => availablePool({ missing }, allImages), [missing, allImages])
   const skipped = allImages.length - available.length
   const favoritesHere = useMemo(() => {
     const fav = new Set(favoriteImages)
@@ -73,7 +102,7 @@ export function Practice() {
   const byDay = useMemo(() => minutesByDay(sessions), [sessions])
   const today = Math.round(byDay.get(dayKey(Date.now())) ?? 0)
   const streak = currentStreak(byDay, new Date())
-  const needsRegion = plan.capture && !settings.captureRegion
+  const needsRegion = plan.capture && !captureTargetOf(settings)
 
   const start = () => {
     const slots = slotsForPlan(plan, pool, Math.random, seen)
@@ -81,19 +110,12 @@ export function Practice() {
     startRun({ plan, slots })
   }
 
-  const pickRegion = async () => {
-    const region = await window.api.pickRegion()
-    if (region) {
-      updateSettings({ captureRegion: region })
-      notify('Canvas area saved.')
-    }
-  }
 
   return (
-    <div className="page-form grid grid-cols-[minmax(0,1fr)_clamp(300px,24vw,380px)] gap-10">
+    <div className="grid grid-cols-[minmax(0,1fr)_clamp(300px,24vw,380px)] gap-10">
       <section aria-label="Session setup" className="min-w-0">
         <h1 className="pb-4 text-[22px] font-semibold tracking-[-0.01em]">What do you want to draw?</h1>
-        <BoardPicker value={plan.boardIds} folderIds={plan.folderIds} onChange={(boardIds, folderIds) => setPlan({ boardIds, folderIds })} />
+        <FolderPicker value={plan.folderIds ?? []} onChange={(folderIds) => setPlan({ boardIds: [], folderIds })} />
 
         <div className="mt-6 divide-y divide-line border-t border-line">
           <Field label="Mode" hint={modeHint(plan.mode)}>
@@ -217,8 +239,8 @@ export function Practice() {
                 label="Favorites only"
                 hint={
                   favoritesHere.length
-                    ? `${favoritesHere.length} favorite ${favoritesHere.length === 1 ? 'image' : 'images'} in these boards.`
-                    : 'No favorites in these boards yet: star images in the Library.'
+                    ? `${favoritesHere.length} favorite ${favoritesHere.length === 1 ? 'image' : 'images'} in these folders.`
+                    : 'No favorites in these folders yet: star images in the Library.'
                 }
               />
               <div className={`flex flex-wrap items-center gap-3 ${plan.mode === 'memory' ? 'hidden' : ''}`}>
@@ -240,25 +262,10 @@ export function Practice() {
               <Toggle
                 checked={plan.capture}
                 onChange={(capture) => setPlan({ capture })}
-                label="Capture my Clip Studio canvas"
-                hint={
-                  settings.captureRegion ? (
-                    <>
-                      Grabs the canvas area at the end of each pose.{' '}
-                      <button type="button" className="text-blue hover:underline" onClick={pickRegion}>
-                        Change area
-                      </button>
-                    </>
-                  ) : (
-                    'Grabs the canvas area at the end of each pose, for review.'
-                  )
-                }
+                label="Capture my canvas"
+                hint="Grabs the window you choose (Clip Studio, or any other) at the end of each pose, for review."
               />
-              {needsRegion && (
-                <div>
-                  <Button onClick={pickRegion}>Pick canvas area</Button>
-                </div>
-              )}
+              {plan.capture && <CaptureSetup />}
             </div>
           </Field>
 
@@ -270,9 +277,8 @@ export function Practice() {
                     type="button"
                     className="h-8 pl-3 pr-1.5 text-[13px] text-ink hover:text-blue"
                     onClick={() => {
-                      const known = p.plan.boardIds.filter((id) => boards.some((b) => b.id === id))
-                      const knownFolders = (p.plan.folderIds ?? []).filter((id) => folders.some((f) => f.id === id))
-                      setPlanState({ ...DEFAULT_PLAN, ...p.plan, boardIds: known, folderIds: knownFolders })
+                      const known = planFolderIds(p.plan).filter((id) => folders.some((f) => f.id === id))
+                      setPlanState({ ...DEFAULT_PLAN, ...p.plan, boardIds: [], folderIds: known })
                     }}
                   >
                     {p.name}
@@ -338,8 +344,8 @@ export function Practice() {
           {!pool.length && (
             <p className="mt-2.5 text-[12.5px] text-muted">
               {plan.favoritesOnly && available.length
-                ? 'No favorites in these boards. Star images in the Library, or turn off Favorites only.'
-                : 'Pick at least one collection or folder with images.'}
+                ? 'No favorites in these folders. Star images in the Library, or turn off Favorites only.'
+                : 'Pick at least one folder with images.'}
             </p>
           )}
           {missingHere > 0 && (
@@ -347,7 +353,7 @@ export function Practice() {
               {missingHere} {missingHere === 1 ? 'image is' : 'images are'} missing on disk and will be skipped.
             </p>
           )}
-          {needsRegion && <p className="mt-2.5 text-[12.5px] text-muted">Pick the canvas area first, or turn capture off.</p>}
+          {needsRegion && <p className="mt-2.5 text-[12.5px] text-muted">Choose the window to capture first, or turn capture off.</p>}
         </div>
 
         {mistakes.length > 0 && (
@@ -376,6 +382,60 @@ export function Practice() {
             </dd>
           </div>
         </dl>
+      </aside>
+    </div>
+  )
+}
+
+/**
+ * Free drawing: no references, just a clock. Draw in Clip Studio (with
+ * PureRef if you like) or on paper; the time counts toward your totals and
+ * the skill you pick. At the end the canvas area can be captured once.
+ */
+function FreeSetup() {
+  const settings = useApp((s) => s.settings)
+  const updateSettings = useApp((s) => s.updateSettings)
+  const startFree = useApp((s) => s.startFree)
+  const notify = useApp((s) => s.notify)
+  const [skillId, setSkillId] = useState<string | undefined>(() => settings.lastPlan?.skillId)
+  const capture = !!settings.freeCapture
+  const needsRegion = capture && !captureTargetOf(settings)
+
+
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_clamp(300px,24vw,380px)] gap-10">
+      <section aria-label="Free drawing setup" className="min-w-0">
+        <h1 className="pb-2 text-[22px] font-semibold tracking-[-0.01em]">Draw whatever you like</h1>
+        <p className="max-w-2xl pb-4 text-muted">
+          No references and no timer to beat: the app only keeps time while you draw in Clip Studio, on paper, or anywhere else. Pause
+          when you take a break; paused time doesn’t count.
+        </p>
+        <div className="divide-y divide-line border-t border-line">
+          <Field label="Skill" hint="Optional. The time counts toward this skill in Stats.">
+            <SkillPicker value={skillId} onChange={setSkillId} />
+          </Field>
+          <Field label="Options">
+            <div className="grid gap-3.5">
+              <Toggle
+                checked={capture}
+                onChange={(freeCapture) => updateSettings({ freeCapture })}
+                label="Capture my canvas at the end"
+                hint="Grabs the window you choose once, when you end; you see it before it is kept with the session."
+              />
+              {capture && <CaptureSetup />}
+            </div>
+          </Field>
+        </div>
+      </section>
+      <aside aria-label="Summary" className="sticky top-8 self-start">
+        <div className="rounded-lg bg-surface p-5 ring-1 ring-line">
+          <div className="text-[22px] font-semibold leading-tight tracking-[-0.01em]">Free drawing</div>
+          <div className="mt-2 text-muted">A clock you can pause. Space pauses while this window is in front; {settings.hotkeys.pause.replace(/\+/g, ' + ')} works from any app.</div>
+          <Button tone="primary" className="mt-5 h-11 w-full text-[14px]" disabled={needsRegion} onClick={() => startFree({ skillId, capture })}>
+            Start free drawing
+          </Button>
+          {needsRegion && <p className="mt-2.5 text-[12.5px] text-muted">Choose the window to capture first, or turn capture off.</p>}
+        </div>
       </aside>
     </div>
   )

@@ -1,12 +1,12 @@
 import { nativeImage, net } from 'electron'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, extname, join, relative, isAbsolute } from 'node:path'
+import { createReadStream, existsSync } from 'node:fs'
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, join, relative, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { FolderInfo, FolderTree, ImageRef, PinterestImport } from '@shared/types'
+import type { FolderInfo, FolderTree, FoundFile, PinFile, PinterestImport, ScannedDir } from '@shared/types'
 import { fetchBoard, PINTEREST_UA, type PinImage } from './pinterest'
-import { timedSync } from './log'
+import { log, timedSync } from './log'
 import { dataDir } from './store'
 
 export const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'])
@@ -16,24 +16,80 @@ export function isImagePath(p: string): boolean {
   return IMAGE_EXTS.has(extname(p).toLowerCase())
 }
 
+/**
+ * The id a new asset for this path gets. It only seeds the id: once an asset
+ * exists, its id stays when the file moves, so it isn't tied to the path.
+ */
 export function imageId(path: string): string {
   return createHash('sha1').update(path.toLowerCase()).digest('hex').slice(0, 16)
 }
 
-export function refFor(path: string, sourceUrl?: string): ImageRef {
-  return sourceUrl ? { id: imageId(path), path, sourceUrl } : { id: imageId(path), path }
-}
-
 const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
 
-/** Images in a folder; with `recursive` (the default) also in every folder inside it. */
-export async function scanFolder(dir: string, recursive = true): Promise<ImageRef[]> {
-  const entries = await readdir(dir, { recursive, withFileTypes: true })
-  const paths = entries
-    .filter((e) => e.isFile() && isImagePath(e.name))
-    .map((e) => join(e.parentPath, e.name))
-  paths.sort(byName)
-  return paths.map((p) => refFor(p))
+/** SHA-256 of a file, read in pieces so a big file never sits in memory whole. */
+export function sha256File(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256')
+    createReadStream(path)
+      .on('data', (chunk) => hash.update(chunk))
+      .on('end', () => resolve(hash.digest('hex')))
+      .on('error', reject)
+  })
+}
+
+const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
+
+/** SHA-256 of each file (null where it can't be read), two at a time so the disk stays usable. */
+export async function hashFiles(paths: string[]): Promise<(string | null)[]> {
+  const out: (string | null)[] = new Array(paths.length).fill(null)
+  let next = 0
+  const worker = async () => {
+    for (let i = next++; i < paths.length; i = next++) out[i] = await sha256File(paths[i]).catch(() => null)
+  }
+  await Promise.all([worker(), worker()])
+  return out
+}
+
+async function found(path: string, size?: number): Promise<FoundFile> {
+  return { path, id: imageId(path), size: size ?? (await stat(path).then((s) => s.size, () => 0)) }
+}
+
+/** Image files picked one by one. */
+export async function filesInfo(paths: string[]): Promise<FoundFile[]> {
+  return Promise.all(paths.filter(isImagePath).map((p) => found(p)))
+}
+
+/**
+ * A disk folder and every sub-folder with images somewhere inside it, all
+ * levels down, each with its own images. Parents come before their
+ * sub-folders. Links (symlinks, junctions) are not followed.
+ */
+export async function scanTree(dir: string): Promise<ScannedDir[]> {
+  const out: ScannedDir[] = []
+  const walk = async (path: string, parent: string | undefined, depth: number): Promise<boolean> => {
+    const entries = await readdir(path, { withFileTypes: true }).catch(() => [])
+    const files = await Promise.all(
+      entries
+        .filter((e) => e.isFile() && isImagePath(e.name))
+        .map((e) => e.name)
+        .sort(byName)
+        .map((n) => found(join(path, n)))
+    )
+    const at = out.length
+    out.push({ path, name: basename(path) || path, ...(parent ? { parent } : {}), files })
+    let any = files.length > 0
+    if (depth < 32) {
+      for (const e of entries.filter((x) => x.isDirectory()).sort((a, b) => byName(a.name, b.name))) {
+        if (await walk(join(path, e.name), path, depth + 1)) any = true
+      }
+    }
+    // A sub-folder with no images anywhere inside it is left out.
+    if (!any && parent) out.splice(at)
+    return any
+  }
+  if (!(await stat(dir).then((s) => s.isDirectory(), () => false))) throw new Error('That folder can’t be found.')
+  await walk(dir, undefined, 0)
+  return out
 }
 
 /**
@@ -67,32 +123,30 @@ export async function inspectFolder(dir: string): Promise<FolderInfo> {
 }
 
 /**
- * Copy images into the app's own folder for a collection, so the collection
- * keeps working if the originals are moved or deleted. Ids stay the same, so
- * favorites and history still match. With `baseDir`, sub-folders are kept.
+ * Copy images into the app's own folder, so they keep working if the
+ * originals are moved or deleted. The originals are only read. With
+ * `baseDir`, sub-folders are kept. Returns the copies (null where a file
+ * vanished or can't be read).
  */
-export async function copyImages(boardId: string, refs: ImageRef[], baseDir?: string): Promise<ImageRef[]> {
-  const dir = collectionDir(boardId)
+export async function copyFiles(folderId: string, paths: string[], baseDir?: string): Promise<(FoundFile | null)[]> {
+  const dir = collectionDir(folderId)
   await mkdir(dir, { recursive: true })
-  const out: ImageRef[] = []
-  for (const ref of refs) {
-    const rel = baseDir && ref.path.toLowerCase().startsWith(baseDir.toLowerCase())
-      ? ref.path.slice(baseDir.length).replace(/^[\\/]+/, '')
-      : `${createHash('sha1').update(ref.path).digest('hex').slice(0, 16)}${extname(ref.path).toLowerCase()}`
+  const out: (FoundFile | null)[] = []
+  for (const path of paths) {
+    const rel = baseDir && path.toLowerCase().startsWith(baseDir.toLowerCase())
+      ? path.slice(baseDir.length).replace(/^[\\/]+/, '')
+      : `${createHash('sha1').update(path).digest('hex').slice(0, 16)}${extname(path).toLowerCase()}`
     const target = join(dir, rel)
     try {
       await mkdir(dirname(target), { recursive: true })
-      if (!existsSync(target)) await copyFile(ref.path, target)
-      out.push({ ...ref, path: target })
+      if (!existsSync(target)) await copyFile(path, target)
+      const bytes = await readFile(target)
+      out.push({ path: target, id: imageId(target), size: bytes.length, sha256: sha256(bytes) })
     } catch {
-      // A file that vanished or can't be read is left out of the copy.
+      out.push(null)
     }
   }
   return out
-}
-
-export function refsForFiles(paths: string[]): ImageRef[] {
-  return paths.filter(isImagePath).map((p) => refFor(p))
 }
 
 function extFromType(type: string | null, fallback = '.jpg'): string {
@@ -106,12 +160,13 @@ function extFromType(type: string | null, fallback = '.jpg'): string {
   return fallback
 }
 
-function collectionDir(boardId: string): string {
-  return dataDir('collections', safeName(boardId))
+/** Where pasted, downloaded and copied-in images for a folder are kept. */
+function collectionDir(folderId: string): string {
+  return dataDir('collections', safeName(folderId))
 }
 
-function pinterestDir(boardId: string): string {
-  return dataDir('cache', 'pinterest', safeName(boardId))
+function pinterestDir(folderId: string): string {
+  return dataDir('cache', 'pinterest', safeName(folderId))
 }
 
 function safeName(s: string): string {
@@ -128,56 +183,57 @@ async function download(url: string, headers: Record<string, string> = {}): Prom
   return { bytes, type }
 }
 
-export async function importUrl(boardId: string, url: string): Promise<ImageRef> {
+export async function importUrl(folderId: string, url: string): Promise<FoundFile & { sourceUrl?: string }> {
   const u = new URL(url)
   if (!['http:', 'https:', 'data:'].includes(u.protocol)) throw new Error('Only web links can be imported.')
   const { bytes, type } = await download(url)
-  const dir = collectionDir(boardId)
+  const dir = collectionDir(folderId)
   await mkdir(dir, { recursive: true })
   const name = createHash('sha1').update(bytes).digest('hex').slice(0, 16)
   const path = join(dir, name + extFromType(type, extname(u.pathname) || '.jpg'))
   if (!existsSync(path)) await writeFile(path, bytes)
-  return refFor(path, u.protocol === 'data:' ? undefined : url)
+  return { path, id: imageId(path), size: bytes.length, sha256: sha256(bytes), ...(u.protocol === 'data:' ? {} : { sourceUrl: url }) }
 }
 
-export async function importBytes(boardId: string, fileName: string, bytes: Uint8Array): Promise<ImageRef> {
+export async function importBytes(folderId: string, fileName: string, bytes: Uint8Array): Promise<FoundFile> {
   if (bytes.length > MAX_DOWNLOAD) throw new Error('Image is too large.')
-  const dir = collectionDir(boardId)
+  const dir = collectionDir(folderId)
   await mkdir(dir, { recursive: true })
   const hash = createHash('sha1').update(bytes).digest('hex').slice(0, 16)
   const ext = isImagePath(fileName) ? extname(fileName).toLowerCase() : '.png'
   const path = join(dir, hash + ext)
   if (!existsSync(path)) await writeFile(path, bytes)
-  return refFor(path)
-}
-
-/** Delete every file the app stored for a collection that was never saved (a failed Pinterest import). */
-export async function removeBoardFiles(boardId: string): Promise<void> {
-  await rm(collectionDir(boardId), { recursive: true, force: true })
-  await rm(pinterestDir(boardId), { recursive: true, force: true })
+  return { path, id: imageId(path), size: bytes.length, sha256: sha256(bytes) }
 }
 
 /**
- * Remove stored images (pasted, Pinterest) that no collection uses any more.
- * Copies share files with the collection they were copied from, so a file
- * goes only when nothing uses it. Only folders of collections that no longer
- * exist are cleaned; a live collection's folder is left as it is.
+ * Delete what a first Pinterest import downloaded for a folder that was
+ * never saved (the import failed). Only that new folder's own download
+ * folder: pins it reused from other folders live elsewhere and stay.
  */
-export async function cleanStoredFiles(liveIds: string[], inUse: string[]): Promise<number> {
-  const live = new Set(liveIds.map(safeName))
+export async function removeImportFiles(folderId: string): Promise<void> {
+  await rm(pinterestDir(folderId), { recursive: true, force: true })
+}
+
+/**
+ * Remove images the app stored (pasted, downloaded, copied in, Pinterest)
+ * that nothing needs any more: no library image uses them and no session
+ * lacks its own smaller copy. Only files inside the app's own stored-image
+ * folders can go; your own files elsewhere are never touched.
+ */
+export async function cleanStoredFiles(inUse: string[]): Promise<number> {
   const used = new Set(inUse.map((p) => p.toLowerCase()))
   let removed = 0
   for (const root of [dataDir('collections'), dataDir('cache', 'pinterest')]) {
     if (!existsSync(root)) continue
     for (const id of await readdir(root)) {
-      if (live.has(id)) continue
       const dir = join(root, id)
       const entries = await readdir(dir, { recursive: true, withFileTypes: true }).catch(() => [])
       let kept = 0
       for (const e of entries) {
         if (!e.isFile()) continue
         const path = join(e.parentPath, e.name)
-        if (used.has(path.toLowerCase())) kept++
+        if (used.has(path.toLowerCase()) || !isInside(root, path)) kept++
         else {
           await rm(path, { force: true })
           removed++
@@ -254,34 +310,46 @@ export async function keepPhoto(sessionId: string, src: string): Promise<string>
 
 /**
  * Fetch a Pinterest board and download its images, so practice works offline.
- * Images already downloaded are kept; images no longer on the board are removed.
+ * Pins already saved (by an earlier sync of any folder; `known`: pin id →
+ * file) are not downloaded again. Nothing is deleted here: pins that left the
+ * board are the library's business, and only after asking.
  */
 export async function importPinterest(
-  boardId: string,
+  folderId: string,
   url: string,
   onProgress: (stage: 'list' | 'download', done: number, total: number) => void,
-  /** Files other collections (copies) still use: never deleted here. */
-  keep: string[] = []
+  known: Record<string, string> = {}
 ): Promise<PinterestImport> {
-  const kept = new Set(keep.map((p) => p.toLowerCase()))
   const board = await fetchBoard(url, {
-    fetch: (u, init) => net.fetch(u, init) as never,
+    // Node's own fetch, not Electron's: through Chromium's network stack the
+    // board page comes without its "next page" bookmark, and a bookmark from
+    // the feed then leads to an empty page (25 of 35 pins on a real board).
+    fetch: (u, init) => globalThis.fetch(u, init as RequestInit) as never,
     onProgress: (n, total) => onProgress('list', n, total)
   })
-  if (!board.pins.length) throw new Error('No images found on this board.')
+  const d = board.diagnostics
+  log(
+    'info',
+    `Pinterest sync ${url}: ${board.pins.length} pins of ${board.expected || '?'}, ${board.skipped} not pictures, ${d.duplicates} seen twice, stop: ${d.stop}; pages: ` +
+      d.pages.map((p) => `${p.kind} ${p.status}${p.tries > 1 ? `x${p.tries}` : ''} ${p.newPins}/${p.pins}${p.next ? '>' : ''}`).join(', ')
+  )
+  if (!board.pins.length) {
+    throw new Error(board.skipped ? 'This board has no pictures the app can use (only videos or other items).' : 'No images found on this board.')
+  }
 
-  const dir = pinterestDir(boardId)
+  const dir = pinterestDir(folderId)
   await mkdir(dir, { recursive: true })
   const existing = new Map<string, string>()
-  for (const f of await readdir(dir)) existing.set(f.replace(/\.[^.]+$/, ''), f)
+  for (const f of await readdir(dir)) existing.set(f.replace(/\.[^.]+$/, ''), join(dir, f))
+  for (const [pin, path] of Object.entries(known)) if (!existing.has(pin) && existsSync(path)) existing.set(pin, path)
 
-  const images: (ImageRef | null)[] = new Array(board.pins.length).fill(null)
+  const pins: ((PinFile & { fresh?: boolean }) | null)[] = new Array(board.pins.length).fill(null)
   let done = 0
   const queue = board.pins.map((pin, i) => ({ pin, i }))
   const worker = async () => {
     for (let job = queue.shift(); job; job = queue.shift()) {
       // One retry: image hosts drop the odd request when six run at once.
-      images[job.i] = await downloadPin(dir, job.pin, existing)
+      pins[job.i] = await downloadPin(dir, job.pin, existing)
         .catch(() => downloadPin(dir, job.pin, existing))
         .catch(() => null)
       onProgress('download', ++done, board.pins.length)
@@ -289,31 +357,28 @@ export async function importPinterest(
   }
   await Promise.all(Array.from({ length: 6 }, worker))
 
-  const ok = images.filter((x): x is ImageRef => !!x)
-  const seen = new Set(board.pins.map((p) => p.id))
-  if (board.partial) {
-    // An interrupted sync must not drop images an earlier sync already saved.
-    for (const [id, f] of existing) if (!seen.has(id)) ok.push(refFor(join(dir, f), `https://www.pinterest.com/pin/${id}/`))
-  } else {
-    for (const [id, f] of existing) if (!seen.has(id) && !kept.has(join(dir, f).toLowerCase())) await rm(join(dir, f), { force: true })
-  }
+  const ok = pins.filter((x): x is PinFile & { fresh?: boolean } => !!x).map(({ fresh, ...p }) => (void fresh, p))
   if (!ok.length) throw new Error('Could not download any images from this board.')
   return {
     name: board.name,
-    images: ok,
+    pins: ok,
     report: {
       found: board.pins.length,
       expected: board.expected,
       partial: board.partial,
-      failed: images.filter((x) => !x).length
+      failed: pins.filter((x) => !x).length,
+      limited: board.limited,
+      skipped: board.skipped,
+      downloaded: pins.filter((x) => x?.fresh).length,
+      diagnostics: board.diagnostics
     }
   }
 }
 
-async function downloadPin(dir: string, pin: PinImage, existing: Map<string, string>): Promise<ImageRef> {
+async function downloadPin(dir: string, pin: PinImage, existing: Map<string, string>): Promise<PinFile & { fresh?: boolean }> {
   const pinUrl = `https://www.pinterest.com/pin/${pin.id}/`
   const have = existing.get(pin.id)
-  if (have) return refFor(join(dir, have), pinUrl)
+  if (have) return { ...(await found(have)), pinId: pin.id, sourceUrl: pinUrl }
   let got: { bytes: Buffer; type: string | null }
   try {
     got = await download(pin.url, { 'User-Agent': PINTEREST_UA })
@@ -324,7 +389,7 @@ async function downloadPin(dir: string, pin: PinImage, existing: Map<string, str
   }
   const path = join(dir, pin.id + extFromType(got.type, extname(new URL(pin.url).pathname) || '.jpg'))
   await writeFile(path, got.bytes)
-  return refFor(path, pinUrl)
+  return { path, id: imageId(path), size: got.bytes.length, sha256: sha256(got.bytes), pinId: pin.id, sourceUrl: pinUrl, fresh: true }
 }
 
 /** Small JPEG thumbnails, cached by path + modified time. Returns null to fall back to the full image. */
@@ -367,4 +432,3 @@ function isInside(dir: string, path: string): boolean {
   const rel = relative(dir, path)
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
 }
-
